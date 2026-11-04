@@ -5,6 +5,7 @@ import re
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
 from email.utils import parsedate_to_datetime
@@ -336,28 +337,53 @@ def phone_digits(p):
     return d
 
 
+GRAPH = os.environ.get("STARK_GRAPH_URL", "https://graph.facebook.com")
+
+
+def wa_ready():
+    return bool(db.get_setting("wa_token", "") and db.get_setting("wa_phone_number_id", ""))
+
+
 def wa_send_raw(to, body):
-    url = db.get_setting("wa_function_url", "")
-    secret = db.get_setting("wa_function_secret", "")
-    if not url or not secret:
-        raise RuntimeError("WhatsApp sending is not set up. Add the Supabase function URL and secret in Settings.")
-    req = urllib.request.Request(url, data=json.dumps({"to": to, "body": body}).encode(), method="POST",
-                                 headers={"Content-Type": "application/json", "x-travel-desk-secret": secret})
+    """Send one message through the WhatsApp Cloud API. Returns the WhatsApp message id."""
+    token = db.get_setting("wa_token", "")
+    phone_id = str(db.get_setting("wa_phone_number_id", "") or "").strip()
+    if not token or not phone_id:
+        raise RuntimeError("WhatsApp sending is not set up. Add the access token and phone number ID in Settings.")
+    to = re.sub(r"\D", "", to or "")
+    if not 11 <= len(to) <= 15:
+        raise RuntimeError("The WhatsApp number must include the country code.")
+    template = (db.get_setting("wa_template_name", "") or "").strip()
+    if template:
+        # Template variables may not contain newlines, tabs or runs of 4+ spaces.
+        param = re.sub(r"\s{2,}", " ", re.sub(r"\s*\n+\s*", " · ", body)).strip()[:1000]
+        payload = {"messaging_product": "whatsapp", "to": to, "type": "template",
+                   "template": {"name": template, "language": {"code": db.get_setting("wa_template_lang", "") or "en"},
+                                "components": [{"type": "body", "parameters": [{"type": "text", "text": param}]}]}}
+    else:
+        payload = {"messaging_product": "whatsapp", "to": to, "type": "text",
+                   "text": {"preview_url": False, "body": body[:4096]}}
+    version = db.get_setting("wa_api_version", "") or "v21.0"
+    req = urllib.request.Request(f"{GRAPH}/{version}/{urllib.parse.quote(phone_id)}/messages",
+                                 data=json.dumps(payload).encode(), method="POST",
+                                 headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             res = json.loads(r.read() or b"{}")
     except urllib.error.HTTPError as e:
-        txt = e.read().decode(errors="replace")
         try:
-            txt = json.loads(txt).get("error", txt)
+            err = json.loads(e.read() or b"{}").get("error", {}) or {}
         except ValueError:
-            pass
-        raise RuntimeError(f"WhatsApp send failed ({e.code}): {str(txt)[:300]}")
+            err = {}
+        msg = (err.get("error_data") or {}).get("details") or err.get("message") or f"WhatsApp API returned {e.code}"
+        if err.get("code") == 131047:
+            msg += " Add an approved template name in Settings to message travellers first."
+        elif err.get("code") == 190 or e.code == 401:
+            msg = "WhatsApp rejected the access token. Paste a new permanent token in Settings."
+        raise RuntimeError(f"WhatsApp send failed: {msg}"[:400])
     except urllib.error.URLError as e:
-        raise RuntimeError(f"Could not reach the WhatsApp function: {e.reason}")
-    if not res.get("ok"):
-        raise RuntimeError(res.get("error") or "WhatsApp send failed.")
-    return res.get("id", "")
+        raise RuntimeError(f"Could not reach WhatsApp: {e.reason}")
+    return ((res.get("messages") or [{}])[0]).get("id", "")
 
 
 def dispatch(trip, kind, actor, segment=None, body=None, only=None):

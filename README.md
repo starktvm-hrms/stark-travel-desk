@@ -2,13 +2,14 @@
 
 Admin dashboard at **https://travel.starkpeople.in** for Stark Industries employee business travel.
 It reads booking emails from a Gmail inbox, turns them into trip cards (train, flight, bus, cab, hotel),
-and sends WhatsApp updates to travellers automatically.
+and sends WhatsApp updates to travellers automatically. Everything runs on the Hostinger VPS that serves
+starkpeople.in; the app only adds its own files and leaves the other sites alone.
 
 ```
-Gmail inbox ──(Gmail API, read-only)──▶ server/ on the VPS ──▶ SQLite (/var/lib/stark-travel)
+Gmail inbox ──(Gmail API, read-only)──▶ server/ on the Hostinger VPS ──▶ SQLite (/var/lib/stark-travel)
                                             │   Stark Decoder: Claude reads email text + PDF tickets
                                             ▼
-                         Supabase Edge Function `stark-travel-whatsapp` ──▶ WhatsApp Cloud API
+                                   WhatsApp Cloud API (Meta)
 ```
 
 ## What it does
@@ -34,10 +35,9 @@ Gmail inbox ──(Gmail API, read-only)──▶ server/ on the VPS ──▶ S
 | --- | --- |
 | `web/` | Static dashboard (vanilla JS, no build step), served by nginx |
 | `server/app.py` | HTTP API on 127.0.0.1 (stdlib), routes under `/api/` |
-| `server/core.py` | Trips, grouping, WhatsApp dispatch, reminders, Gmail sync loop |
+| `server/core.py` | Trips, grouping, WhatsApp Cloud API sending, reminders, Gmail sync loop |
 | `server/decoder.py` | Stark Decoder (Anthropic SDK) |
 | `server/gmail.py` | Gmail REST API client (OAuth 2.0, read-only scope) |
-| `supabase/functions/stark-travel-whatsapp/` | Edge Function that calls the WhatsApp Cloud API |
 | `deploy/vps-setup.sh` | One-time VPS setup (nginx site, systemd, certbot, auto-update cron, backups) |
 
 ## Deploy
@@ -47,11 +47,9 @@ Gmail inbox ──(Gmail API, read-only)──▶ server/ on the VPS ──▶ S
    curl -fsSL https://raw.githubusercontent.com/starktvm-hrms/stark-travel-desk/main/deploy/vps-setup.sh -o /tmp/travel-setup.sh && sudo bash /tmp/travel-setup.sh
    ```
    It asks for the first admin username and password. Pushes to `main` go live within 5 minutes.
-2. **WhatsApp**: in Supabase (project *huddle-meet* → Edge Functions → Secrets) set
-   `TRAVEL_DESK_SECRET`, `WA_TOKEN`, `WA_PHONE_NUMBER_ID` and, for messages that start a conversation,
-   `WA_TEMPLATE_NAME` (an approved Utility template whose body is a single `{{1}}`).
-   Then in the dashboard → Settings → WhatsApp, paste
-   `https://vqicxogodvxskbmchnqq.supabase.co/functions/v1/stark-travel-whatsapp` and the same secret.
+2. **WhatsApp**: dashboard → Settings → WhatsApp: a permanent Meta system-user token, the sending number's
+   Phone number ID, and an approved Utility template whose body is a single `{{1}}` (needed to message
+   travellers who haven't written to the number in the last 24 hours).
 3. **Gmail**: Settings → Gmail shows the redirect URI and the Google Cloud steps; press *Connect Gmail*.
 4. **Claude API key**: Settings → Stark Decoder.
 

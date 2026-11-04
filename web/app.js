@@ -132,7 +132,7 @@
     const steps = [
       [st.gmail_connected, "Connect the travel inbox", st.gmail_connected ? `Reading ${esc(st.gmail_account || "Gmail")}` : "Settings → Gmail. Needs a Google OAuth client."],
       [st.decoder_ready, "Add the Claude API key", "Stark Decoder reads tickets and booking emails."],
-      [st.whatsapp_ready, "Connect WhatsApp sending", "Supabase function URL and secret in Settings."],
+      [st.whatsapp_ready, "Connect WhatsApp sending", "Meta access token and phone number ID in Settings."],
       [hasNumbers && S.travelers.length > 0, "Save travellers' WhatsApp numbers", "Travellers tab. Names are matched to bookings."],
     ];
     if (steps.every((s) => s[0])) return "";
@@ -254,9 +254,9 @@
     const ready = S.status.whatsapp_ready;
     $(".dialog").innerHTML = `<div class="dlg-h"><h2>Send to WhatsApp</h2><button class="icon-btn" data-act="close" aria-label="Close">${I.x}</button></div>
       <form class="dlg-b" id="waForm">
-        ${ready ? "" : `<div class="err">WhatsApp sending isn't connected yet. Add the Supabase function in Settings first.</div>`}
+        ${ready ? "" : `<div class="err">WhatsApp sending isn't connected yet. Add the Meta access token and phone number ID in Settings first.</div>`}
         <div class="field"><span class="lab">Send to</span><div class="recips">${(p.travelers.length ? p.travelers : []).map((r, i) => `<label class="recip ${r.phone ? "" : "off"}"><input type="checkbox" name="to" value="${esc(r.name)}" ${r.phone ? "checked" : "disabled"} id="r${i}"><span class="avatar">${esc(initials(r.name))}</span><div class="grow"><b>${esc(r.name)}</b>${r.phone ? `<small class="mono">${esc(r.phone)}</small>` : `<small class="miss">No WhatsApp number saved</small>`}</div>${r.phone ? "" : `<button type="button" class="btn sm" data-act="add-number" data-name="${esc(r.name)}">Add number</button>`}</label>`).join("") || `<p class="err">This trip has no named travellers. Edit the trip to add one.</p>`}</div></div>
-        <div class="field"><label for="waBody">Message</label><div class="wa-preview"><textarea id="waBody">${esc(p.body)}</textarea></div><span class="hint">Sent from the Stark Travel Desk WhatsApp number through the Supabase function.</span></div>
+        <div class="field"><label for="waBody">Message</label><div class="wa-preview"><textarea id="waBody">${esc(p.body)}</textarea></div><span class="hint">Sent from the Stark Travel Desk WhatsApp Business number.</span></div>
         <div class="err" id="waErr"></div>
       </form>
       <div class="dlg-f"><span></span><div class="r"><button class="btn" data-act="close">Cancel</button><button class="btn wa-solid" id="waSendBtn" ${ready && p.travelers.some((r) => r.phone) ? "" : "disabled"}>${I.send}Send now</button></div></div>`;
@@ -422,9 +422,15 @@
         <div class="field"><label for="ak">Claude API key</label><input id="ak" name="anthropic_api_key" type="password" autocomplete="off" placeholder="${secretPh("anthropic_api_key") || "sk-ant-…"}"><span class="hint">From <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>. Stored only on this server.</span></div>
       </section>
       <section class="card-s"><h2>WhatsApp sending ${st.whatsapp_ready ? `<span class="ok-tag">Connected</span>` : `<span class="no-tag">Not connected</span>`}</h2>
-        <p>Messages go out through the <span class="mono">stark-travel-whatsapp</span> Supabase Edge Function, which calls the WhatsApp Cloud API.</p>
-        <div class="field"><label for="wurl">Function URL</label><input id="wurl" name="wa_function_url" value="${esc(s.wa_function_url || "")}" placeholder="https://<project>.supabase.co/functions/v1/stark-travel-whatsapp"></div>
-        <div class="field"><label for="wsec">Travel desk secret</label><input id="wsec" name="wa_function_secret" type="password" autocomplete="off" placeholder="${secretPh("wa_function_secret") || "Same value as TRAVEL_DESK_SECRET in Supabase"}"></div>
+        <p>Sent straight from this server through the WhatsApp Cloud API (Meta). The token is stored only on this server.</p>
+        <details class="howto" ${st.whatsapp_ready ? "" : "open"}><summary>Get these from Meta (one time)</summary><ol>
+          <li>In <a href="https://business.facebook.com/settings/system-users" target="_blank" rel="noopener">Meta Business settings → System users</a>, create a system user, assign it your WhatsApp app with full control, and generate a <b>permanent token</b> with <span class="mono">whatsapp_business_messaging</span>.</li>
+          <li>In <a href="https://developers.facebook.com/apps/" target="_blank" rel="noopener">your Meta app</a> → WhatsApp → API setup, copy the <b>Phone number ID</b> of the sending number.</li>
+          <li>WhatsApp only lets a business start a conversation with an approved template. In WhatsApp Manager create a <b>Utility</b> template whose body is just <span class="mono">{{1}}</span> and enter its name below. Without it, messages reach only travellers who wrote to your number in the last 24 hours.</li></ol></details>
+        <div class="field"><label for="wtok">Permanent access token</label><input id="wtok" name="wa_token" type="password" autocomplete="off" placeholder="${secretPh("wa_token") || "EAAG…"}"></div>
+        <div class="row2"><div class="field"><label for="wpid">Phone number ID</label><input id="wpid" name="wa_phone_number_id" inputmode="numeric" value="${esc(s.wa_phone_number_id || "")}" placeholder="1098765432109876"></div>
+          <div class="field"><label for="wtpl">Template name</label><input id="wtpl" name="wa_template_name" value="${esc(s.wa_template_name || "")}" placeholder="travel_update"></div></div>
+        <div class="field"><label for="wlang">Template language code</label><input id="wlang" name="wa_template_lang" value="${esc(s.wa_template_lang || "")}" placeholder="en"><span class="hint">Must match the template's language in WhatsApp Manager, e.g. en, en_US, hi.</span></div>
         <div class="field"><label for="wtest">Send a test message to</label><div class="copyrow"><input id="wtest" type="tel" placeholder="+91 98765 43210"><button type="button" class="btn" data-act="wa-test">Send test</button></div></div>
       </section>
       <section class="card-s"><h2>Automatic updates</h2><p>What the desk sends on its own. Travellers without a number, or with updates turned off, are skipped and logged.</p>
