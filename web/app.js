@@ -32,7 +32,7 @@
   const S = {
     user: null, view: "trips", trips: [], status: {}, travelers: [], settings: null,
     q: "", phase: "upcoming", mode: "", attention: false, openLogs: {}, logs: {},
-    emails: [], wa: [], busy: false,
+    emails: [], wa: [], pending: [], busy: false,
   };
 
   // ------------------------------------------------------------ utils
@@ -47,6 +47,9 @@
     if (s < 86400) return `${Math.round(s / 3600)} h ago`;
     const d = new Date(ts * 1000); return `${d.getDate()} ${MON[d.getMonth()]}, ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
   }
+  function waDigits(p) { let d = String(p || "").replace(/\D/g, ""); if (d.length === 10) d = "91" + d; return d; }
+  const waLink = (phone, text) => `https://wa.me/${waDigits(phone)}?text=${encodeURIComponent(text || "")}`;
+  const TRIG = { new_trip: "Booking confirmation", status: "Status change", reminder: "Departure reminder", manual: "Trip details", test: "Test" };
   const initials = (n) => (n || "?").split(/\s+/).filter(Boolean).slice(0, 2).map((x) => x[0]).join("").toUpperCase();
   function toast(msg, bad) {
     const t = $("#toast"); t.innerHTML = `<div class="${bad ? "bad" : ""}">${esc(msg)}</div>`;
@@ -98,7 +101,7 @@
       <nav class="tabs" aria-label="Sections">
         ${[["trips", "Trips"], ["travellers", "Travellers"], ["activity", "Activity"], ["settings", "Settings"]].map(([k, l]) => `<button data-view="${k}" aria-current="${S.view === k ? "page" : "false"}">${l}</button>`).join("")}
       </nav>
-      <div class="top-right">${chip}
+      <div class="top-right">${S.pending.length ? `<button class="btn sm wa" data-act="goto-pending">${I.send}${S.pending.length} to send</button>` : ""}${chip}
         <button class="btn sm soft" data-act="sync" ${st.gmail_connected ? "" : "disabled"}>${I.sync}<span>${S.busy ? "Syncing…" : "Sync Gmail"}</span></button>
         <button class="btn sm ghost" data-act="logout" title="Signed in as ${esc(S.user)}">Sign out</button>
       </div></div></header><main id="main"></main>`;
@@ -132,7 +135,6 @@
     const steps = [
       [st.gmail_connected, "Connect the travel inbox", st.gmail_connected ? `Reading ${esc(st.gmail_account || "Gmail")}` : "Settings → Gmail. Needs a Google OAuth client."],
       [st.decoder_ready, "Add the DeepSeek API key", "Stark Decoder reads tickets and booking emails."],
-      [st.whatsapp_ready, "Connect WhatsApp sending", "Meta access token and phone number ID in Settings."],
       [hasNumbers && S.travelers.length > 0, "Save travellers' WhatsApp numbers", "Travellers tab. Names are matched to bookings."],
     ];
     if (steps.every((s) => s[0])) return "";
@@ -146,11 +148,12 @@
     const sentToday = (S.status.sent_today ?? null);
     $("#main").innerHTML = `
       ${setupChecklist()}
+      ${pendingPanel()}
       <section class="stats">
         <div class="stat"><span class="k">Upcoming trips</span><span class="v">${counts.upcoming}</span><span class="s">${counts.ongoing} travelling now</span></div>
         <div class="stat"><span class="k">Departing today</span><span class="v">${departing}</span><span class="s">Trips with a segment today</span></div>
         <div class="stat ${missing.size ? "warn" : ""}"><span class="k">Missing WhatsApp number</span><span class="v">${missing.size}</span><span class="s">${missing.size ? "Travellers who won't get updates" : "Everyone can be reached"}</span></div>
-        <div class="stat"><span class="k">WhatsApp sent today</span><span class="v">${sentToday ?? "–"}</span><span class="s">Automatic and manual</span></div>
+        <div class="stat ${S.pending.length ? "warn" : ""}"><span class="k">WhatsApp today</span><span class="v">${sentToday ?? "–"}</span><span class="s">${S.pending.length ? `${S.pending.length} waiting to be sent` : "Sent or opened today"}</span></div>
       </section>
       <section class="filters">
         <div class="search">${I.search}<input id="q" type="search" placeholder="Search traveller, city, PNR, train or flight no., hotel…" value="${esc(S.q)}" aria-label="Search trips"></div>
@@ -161,6 +164,18 @@
       </section>
       <section class="trips" id="tripList"></section>`;
     renderTripList();
+  }
+  function pendingPanel() {
+    if (!S.pending.length) return "";
+    return `<section class="panel pending" id="pendingPanel"><div class="panel-h"><div><h2>Needs sending on WhatsApp <span class="count-pill">${S.pending.length}</span></h2>
+      <p>Click <b>Open in WhatsApp</b>, then press Send in WhatsApp. The message is already filled in.</p></div></div>
+      <ul class="pend-list">${S.pending.map((m) => `<li class="pend" id="pend-${m.id}">
+        <span class="avatar">${esc(initials(m.traveler))}</span>
+        <div class="grow"><b>${esc(m.traveler)}</b> <span class="mono sub">${esc(m.to_phone)}</span>
+          <div class="sub">${esc(TRIG[m.trigger] || m.trigger)} · ${m.trip_id ? `<a href="#" data-act="goto" data-id="${m.trip_id}">${esc(m.title || "Trip")}</a>` : ""} · queued ${ago(m.at)}</div>
+          <details><summary>Show message</summary><pre class="msg-pre">${esc(m.body)}</pre></details></div>
+        <div class="actions"><a class="btn sm wa-solid" href="${esc(waLink(m.to_phone, m.body))}" target="_blank" rel="noopener" data-act="open-pending" data-mid="${m.id}">${I.send}Open in WhatsApp</a>
+          <button class="btn sm ghost" data-act="skip-pending" data-mid="${m.id}">Skip</button></div></li>`).join("")}</ul></section>`;
   }
   function renderTripList() {
     const list = filteredTrips();
@@ -201,7 +216,10 @@
       : `<div class="person"><span class="avatar">?</span><div><b>Not named in the email</b><small><button class="loglink" data-act="edit" data-id="${t.id}" style="color:var(--blue)">Add traveller</button></small></div></div>`;
     const open = S.openLogs[t.id];
     const lw = t.last_whatsapp;
-    const waMeta = lw ? `<div class="wa-meta ${lw.state === "failed" ? "bad" : ""}">${lw.state === "sent" ? "Last WhatsApp " + ago(lw.at) : lw.state === "failed" ? "Last WhatsApp failed " + ago(lw.at) : "Last update skipped: " + esc(lw.error || "")}</div>` : `<div class="wa-meta">No WhatsApp sent yet</div>`;
+    const waMeta = !lw ? `<div class="wa-meta">No WhatsApp sent yet</div>`
+      : `<div class="wa-meta ${lw.state === "failed" ? "bad" : lw.state === "pending" ? "due" : ""}">${{
+        sent: "Last WhatsApp sent " + ago(lw.at), opened: "WhatsApp opened " + ago(lw.at), failed: "Last WhatsApp failed " + ago(lw.at),
+        pending: "Update waiting to be sent", dismissed: "Last update skipped", skipped: "Last update not sent: " + esc(lw.error || "") }[lw.state] || ""}</div>`;
     return `<article class="trip" id="trip-${t.id}">
       <div class="t-left">
         <div class="t-badges">${modeBadge(t)}<span class="phase ph-${t.phase}">${phaseLbl}</span></div>
@@ -252,6 +270,7 @@
     modal(`<div class="dlg-h"><h2>Send to WhatsApp</h2><button class="icon-btn" data-act="close" aria-label="Close">${I.x}</button></div><div class="dlg-b"><p>Loading message…</p></div>`, "narrow");
     let p; try { p = await api(`/trips/${t.id}/whatsapp`); } catch (e) { closeModal(); return toast(e.message, true); }
     const ready = S.status.whatsapp_ready;
+    if (!ready) return openWaLink(t, p);
     $(".dialog").innerHTML = `<div class="dlg-h"><h2>Send to WhatsApp</h2><button class="icon-btn" data-act="close" aria-label="Close">${I.x}</button></div>
       <form class="dlg-b" id="waForm">
         ${ready ? "" : `<div class="err">WhatsApp sending isn't connected yet. Add the Meta access token and phone number ID in Settings first.</div>`}
@@ -271,6 +290,23 @@
         else { closeModal(); toast(`Sent to ${sent} traveller${sent === 1 ? "" : "s"}`); }
         await refresh(t.id);
       } catch (e) { $("#waErr").textContent = e.message; $("#waSendBtn").disabled = false; $("#waSendBtn").lastChild.textContent = "Send now"; }
+    });
+  }
+
+  function openWaLink(t, p) {
+    const recips = p.travelers;
+    $(".dialog").innerHTML = `<div class="dlg-h"><h2>Send to WhatsApp</h2><button class="icon-btn" data-act="close" aria-label="Close">${I.x}</button></div>
+      <div class="dlg-b">
+        <div class="field"><label for="waBody">Message</label><div class="wa-preview"><textarea id="waBody">${esc(p.body)}</textarea></div>
+          <span class="hint">Edit if needed. WhatsApp opens on this device with the message filled in; press Send there.</span></div>
+        <div class="field"><span class="lab">Travellers</span><div class="recips">${recips.map((r) => `<div class="recip ${r.phone ? "" : "off"}"><span class="avatar">${esc(initials(r.name))}</span>
+          <div class="grow"><b>${esc(r.name)}</b>${r.phone ? `<small class="mono">${esc(r.phone)}</small>` : `<small class="miss">No WhatsApp number saved</small>`}</div>
+          ${r.phone ? `<a class="btn sm wa-solid" href="${esc(waLink(r.phone, p.body))}" target="_blank" rel="noopener" data-act="open-manual" data-trip="${t.id}" data-name="${esc(r.name)}" data-phone="${esc(r.phone)}">${I.send}Open in WhatsApp</a>`
+            : `<button type="button" class="btn sm" data-act="add-number" data-name="${esc(r.name)}">Add number</button>`}</div>`).join("") || `<p class="err">This trip has no named travellers. Edit the trip to add one.</p>`}</div></div>
+      </div>
+      <div class="dlg-f"><button class="btn" data-act="copy-wa">Copy message</button><div class="r"><button class="btn" data-act="close">Done</button></div></div>`;
+    $("#waBody").addEventListener("input", (e) => {
+      document.querySelectorAll('[data-act="open-manual"]').forEach((a) => (a.href = waLink(a.dataset.phone, e.target.value)));
     });
   }
 
@@ -385,10 +421,10 @@
   async function renderActivity() {
     $("#main").innerHTML = `<div class="page-head"><div><h1 class="page">Activity</h1><p>What the desk read from Gmail and what it sent on WhatsApp.</p></div></div><div id="act">Loading…</div>`;
     try { const [e, w] = await Promise.all([api("/emails"), api("/whatsapp/messages")]); S.emails = e.emails; S.wa = w.messages; } catch (ex) { $("#act").textContent = ex.message; return; }
-    const trig = { new_trip: "Booking confirmation", status: "Status change", reminder: "Departure reminder", manual: "Sent by admin", test: "Test" };
+    const trig = TRIG; const stName = { sent: "Sent", opened: "Opened in WhatsApp", pending: "Waiting", dismissed: "Skipped", skipped: "Not sent", failed: "Failed" };
     $("#act").innerHTML = `<div style="display:grid;gap:16px">
       <section class="panel"><div class="panel-h"><div><h2>WhatsApp messages</h2><p>Latest 150</p></div></div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>When</th><th>Traveller</th><th>Trip</th><th>Why</th><th>Result</th></tr></thead><tbody>
-        ${S.wa.map((m) => `<tr><td class="sub">${ago(m.at)}</td><td><b>${esc(m.traveler)}</b><div class="sub mono">${esc(m.to_phone)}</div></td><td>${m.trip_id ? `<a href="#" data-act="goto" data-id="${m.trip_id}">${esc(m.title || "Trip")}</a>` : '<span class="sub">—</span>'}</td><td>${esc(trig[m.trigger] || m.trigger)}</td><td><span class="state s-${m.state}">${m.state}</span>${m.error ? `<div class="sub">${esc(m.error)}</div>` : ""}</td></tr>`).join("") || `<tr><td colspan="5" class="sub" style="padding:24px;text-align:center">No messages yet.</td></tr>`}
+        ${S.wa.map((m) => `<tr><td class="sub">${ago(m.at)}</td><td><b>${esc(m.traveler)}</b><div class="sub mono">${esc(m.to_phone)}</div></td><td>${m.trip_id ? `<a href="#" data-act="goto" data-id="${m.trip_id}">${esc(m.title || "Trip")}</a>` : '<span class="sub">—</span>'}</td><td>${esc(trig[m.trigger] || m.trigger)}</td><td><span class="state s-${m.state}">${stName[m.state] || m.state}</span>${m.error ? `<div class="sub">${esc(m.error)}</div>` : ""}</td></tr>`).join("") || `<tr><td colspan="5" class="sub" style="padding:24px;text-align:center">No messages yet.</td></tr>`}
       </tbody></table></div></section>
       <section class="panel"><div class="panel-h"><div><h2>Emails read by Stark Decoder</h2><p>Booking emails become trips. Other mail is skipped.</p></div>${S.status.gmail_connected ? `<button class="btn sm soft" data-act="sync">${I.sync}Sync now</button>` : ""}</div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>Received</th><th>Email</th><th>Result</th><th></th></tr></thead><tbody>
         ${S.emails.map((m) => `<tr><td class="sub">${ago(m.received_at)}</td><td><b>${esc(m.subject || "(no subject)")}</b><div class="sub">${esc(m.sender)}</div></td><td><span class="state s-${m.state}">${{ parsed: "Trip updated", ignored: "Not a booking", error: "Error" }[m.state]}</span>${m.error ? `<div class="sub">${esc(m.error)}</div>` : ""}${m.trip_id ? `<div><a href="#" data-act="goto" data-id="${m.trip_id}">Open trip</a></div>` : ""}</td><td>${m.state !== "parsed" ? `<button class="btn sm" data-act="retry" data-id="${esc(m.gmail_id)}">Read again</button>` : ""}</td></tr>`).join("") || `<tr><td colspan="4" class="sub" style="padding:24px;text-align:center">No emails read yet.</td></tr>`}
@@ -422,19 +458,24 @@
         <div class="field"><label for="ak">DeepSeek API key</label><input id="ak" name="deepseek_api_key" type="password" autocomplete="off" placeholder="${secretPh("deepseek_api_key") || "sk-…"}"><span class="hint">From <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">platform.deepseek.com</a>. The account needs a positive balance. Stored only on this server.</span></div>
         <div class="field"><label for="dsm">Model</label><input id="dsm" name="deepseek_model" value="${esc(s.deepseek_model || "")}" placeholder="deepseek-chat"><span class="hint">Leave empty for deepseek-chat. PDF tickets are converted to text on this server before they're sent.</span></div>
       </section>
-      <section class="card-s"><h2>WhatsApp sending ${st.whatsapp_ready ? `<span class="ok-tag">Connected</span>` : `<span class="no-tag">Not connected</span>`}</h2>
-        <p>Sent straight from this server through the WhatsApp Cloud API (Meta). The token is stored only on this server.</p>
-        <details class="howto" ${st.whatsapp_ready ? "" : "open"}><summary>Get these from Meta (one time)</summary><ol>
+      <section class="card-s"><h2>WhatsApp ${st.whatsapp_ready ? `<span class="ok-tag">Automatic (API)</span>` : `<span class="ok-tag">Click-to-chat</span>`}</h2>
+        ${st.whatsapp_ready ? `<p>Messages are sent automatically through the WhatsApp Cloud API. Remove the token below to go back to click-to-chat.</p>`
+          : `<p>No setup needed. Updates are queued under <b>Needs sending</b> on the Trips page; an admin clicks <b>Open in WhatsApp</b> and presses Send. Messages go from whichever WhatsApp account is signed in on that phone or computer.</p>`}
+        <details class="howto" ${st.whatsapp_ready ? "open" : ""}><summary>Optional: send automatically with the WhatsApp Cloud API</summary>
+          <ol>
           <li>In <a href="https://business.facebook.com/settings/system-users" target="_blank" rel="noopener">Meta Business settings → System users</a>, create a system user, assign it your WhatsApp app with full control, and generate a <b>permanent token</b> with <span class="mono">whatsapp_business_messaging</span>.</li>
           <li>In <a href="https://developers.facebook.com/apps/" target="_blank" rel="noopener">your Meta app</a> → WhatsApp → API setup, copy the <b>Phone number ID</b> of the sending number.</li>
-          <li>WhatsApp only lets a business start a conversation with an approved template. In WhatsApp Manager create a <b>Utility</b> template whose body is just <span class="mono">{{1}}</span> and enter its name below. Without it, messages reach only travellers who wrote to your number in the last 24 hours.</li></ol></details>
-        <div class="field"><label for="wtok">Permanent access token</label><input id="wtok" name="wa_token" type="password" autocomplete="off" placeholder="${secretPh("wa_token") || "EAAG…"}"></div>
-        <div class="row2"><div class="field"><label for="wpid">Phone number ID</label><input id="wpid" name="wa_phone_number_id" inputmode="numeric" value="${esc(s.wa_phone_number_id || "")}" placeholder="1098765432109876"></div>
-          <div class="field"><label for="wtpl">Template name</label><input id="wtpl" name="wa_template_name" value="${esc(s.wa_template_name || "")}" placeholder="travel_update"></div></div>
-        <div class="field"><label for="wlang">Template language code</label><input id="wlang" name="wa_template_lang" value="${esc(s.wa_template_lang || "")}" placeholder="en"><span class="hint">Must match the template's language in WhatsApp Manager, e.g. en, en_US, hi.</span></div>
-        <div class="field"><label for="wtest">Send a test message to</label><div class="copyrow"><input id="wtest" type="tel" placeholder="+91 98765 43210"><button type="button" class="btn" data-act="wa-test">Send test</button></div></div>
+          <li>In WhatsApp Manager create a <b>Utility</b> template whose body is just <span class="mono">{{1}}</span> and enter its name below.</li></ol>
+          <div style="display:grid;gap:12px;margin-top:12px">
+          <div class="field"><label for="wtok">Permanent access token</label><input id="wtok" name="wa_token" type="password" autocomplete="off" placeholder="${secretPh("wa_token") || "EAAG…"}"></div>
+          <div class="row2"><div class="field"><label for="wpid">Phone number ID</label><input id="wpid" name="wa_phone_number_id" inputmode="numeric" value="${esc(s.wa_phone_number_id || "")}" placeholder="1098765432109876"></div>
+            <div class="field"><label for="wtpl">Template name</label><input id="wtpl" name="wa_template_name" value="${esc(s.wa_template_name || "")}" placeholder="travel_update"></div></div>
+          <div class="field"><label for="wlang">Template language code</label><input id="wlang" name="wa_template_lang" value="${esc(s.wa_template_lang || "")}" placeholder="en"></div>
+          ${st.whatsapp_ready ? `<div class="field"><label for="wtest">Send a test message to</label><div class="copyrow"><input id="wtest" type="tel" placeholder="+91 98765 43210"><button type="button" class="btn" data-act="wa-test">Send test</button></div></div>
+          <div class="actions"><button type="button" class="btn danger sm" data-act="wa-api-off">Switch back to click-to-chat</button></div>` : ""}
+          </div></details>
       </section>
-      <section class="card-s"><h2>Automatic updates</h2><p>What the desk sends on its own. Travellers without a number, or with updates turned off, are skipped and logged.</p>
+      <section class="card-s"><h2>Automatic updates</h2><p>${st.whatsapp_ready ? "What the desk sends on its own." : "What the desk queues under Needs sending on its own."} Travellers without a number, or with updates turned off, are skipped and logged.</p>
         <label class="check"><input type="checkbox" name="auto_new_trip" ${s.auto_new_trip !== false ? "checked" : ""}><span><b>New booking</b><span>Send the itinerary when a booking email becomes a new trip.</span></span></label>
         <label class="check"><input type="checkbox" name="auto_status" ${s.auto_status !== false ? "checked" : ""}><span><b>Status change</b><span>Send when a segment becomes confirmed, delayed, cancelled or completed, from an email or an admin edit.</span></span></label>
         <div class="field"><label for="rh">Departure reminder (hours before)</label><input id="rh" name="reminder_hours" type="number" min="0" max="48" step="0.5" value="${esc(s.reminder_hours ?? 3)}"><span class="hint">0 turns reminders off. Sent once per segment that has a departure or check-in time.</span></div>
@@ -466,7 +507,16 @@
   // ------------------------------------------------------------ data
   async function loadTrips() {
     const r = await api("/trips"); S.trips = r.trips; S.status = r.status;
-    try { const w = await api("/whatsapp/messages"); const d = new Date(); d.setHours(0, 0, 0, 0); S.status.sent_today = w.messages.filter((m) => m.state === "sent" && m.at * 1000 >= d.getTime()).length; } catch { /* ignore */ }
+    try {
+      const [w, pend] = await Promise.all([api("/whatsapp/messages"), api("/whatsapp/pending")]);
+      const d = new Date(); d.setHours(0, 0, 0, 0);
+      S.status.sent_today = w.messages.filter((m) => (m.state === "sent" || m.state === "opened") && m.at * 1000 >= d.getTime()).length;
+      S.pending = pend.messages;
+    } catch { /* ignore */ }
+  }
+  function updatePendingCount() {
+    const c = document.querySelector(".pending .count-pill"); if (c) c.textContent = S.pending.length;
+    const b = document.querySelector('[data-act="goto-pending"]'); if (b) b.lastChild.textContent = `${S.pending.length} to send`;
   }
   async function loadTravellers() { S.travelers = (await api("/travelers")).travelers; }
   async function refresh(flashId) {
@@ -528,6 +578,26 @@
       case "del-trip":
         if (!a.dataset.confirm) { a.dataset.confirm = "1"; a.textContent = "Click again to delete"; break; }
         await api(`/trips/${draft.id}`, { method: "DELETE" }); closeModal(); toast("Trip deleted"); refresh(); break;
+      case "open-pending": {
+        // Let the link open WhatsApp, then mark it done here.
+        const mid = +a.dataset.mid;
+        api("/whatsapp/opened", { method: "POST", body: { id: mid } }).then(() => {
+          S.pending = S.pending.filter((m) => m.id !== mid); const li = $("#pend-" + mid); if (li) li.remove();
+          if (!S.pending.length) refresh(); else updatePendingCount(); toast("Marked as opened in WhatsApp");
+        }).catch((ex) => toast(ex.message, true));
+        break;
+      }
+      case "skip-pending": {
+        const mid = +a.dataset.mid;
+        try { await api("/whatsapp/dismiss", { method: "POST", body: { id: mid } }); S.pending = S.pending.filter((m) => m.id !== mid); toast("Skipped"); refresh(); } catch (ex) { toast(ex.message, true); }
+        break;
+      }
+      case "goto-pending": S.view = "trips"; render(); setTimeout(() => { const el = $("#pendingPanel"); if (el) el.scrollIntoView({ block: "start" }); }, 30); break;
+      case "open-manual":
+        api(`/trips/${a.dataset.trip}/whatsapp/opened`, { method: "POST", body: { traveler: a.dataset.name, body: $("#waBody").value } })
+          .then(() => { a.textContent = "Opened ✓"; refresh(); }).catch((ex) => toast(ex.message, true));
+        break;
+      case "copy-wa": copy($("#waBody").value, $("#waBody")); break;
       case "goto": e.preventDefault(); S.view = "trips"; S.phase = "all"; S.q = ""; render(); setTimeout(() => { const el = $("#trip-" + id); if (el) { el.scrollIntoView({ block: "center" }); el.classList.add("flash"); } }, 50); break;
       case "retry":
         a.disabled = true; a.textContent = "Reading…";
@@ -536,6 +606,10 @@
       case "copy-redir": copy($("#redir").value, $("#redir")); break;
       case "gmail-connect": if (await saveSettings()) location.href = "/api/gmail/connect"; break;
       case "gmail-disconnect": if (await saveSettings({ clear_gmail: true })) renderSettings(); break;
+      case "wa-api-off":
+        if (!a.dataset.confirm) { a.dataset.confirm = "1"; a.textContent = "Click again to remove the token"; break; }
+        try { await api("/settings", { method: "PUT", body: { clear_wa_api: true } }); toast("Switched to click-to-chat"); await loadTrips(); renderSettings(); } catch (ex) { toast(ex.message, true); }
+        break;
       case "wa-test": {
         const ok = await saveSettings(); if (!ok) break;
         a.disabled = true;

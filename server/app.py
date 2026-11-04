@@ -341,6 +341,8 @@ def status_info():
         "gmail_last_sync": db.get_setting("gmail_last_sync", None),
         "decoder_ready": bool(db.get_setting("deepseek_api_key", "")),
         "whatsapp_ready": core.wa_ready(),
+        "whatsapp_mode": "api" if core.wa_ready() else "link",
+        "whatsapp_pending": (db.one("SELECT COUNT(*) n FROM wa_messages WHERE state='pending'") or {"n": 0})["n"],
         "sync_minutes": db.get_setting("sync_minutes", 10),
         "background_error": db.get_setting("background_error", None),
     }
@@ -376,6 +378,9 @@ def r_settings_save(h, user, q):
         if k in ("wa_phone_number_id", "wa_template_name", "wa_template_lang", "deepseek_model") and isinstance(v, str):
             v = v.strip()
         db.set_setting(k, v)
+    if b.get("clear_wa_api"):
+        for k in ("wa_token", "wa_phone_number_id", "wa_template_name", "wa_template_lang"):
+            db.set_setting(k, None)
     if b.get("clear_gmail"):
         for k in ("gmail_refresh_token", "gmail_account"):
             db.set_setting(k, None)
@@ -451,6 +456,35 @@ def r_wa_test(h, user, q):
     return h.send_json(200, {"ok": True})
 
 
+def _msg_id(h):
+    try:
+        return int(h.body().get("id"))
+    except (TypeError, ValueError):
+        raise ValueError("Unknown message.")
+
+
+def r_wa_opened(h, user, q):
+    return h.send_json(200, {"message": core.wa_mark(_msg_id(h), "opened", user)})
+
+
+def r_wa_dismiss(h, user, q):
+    return h.send_json(200, {"message": core.wa_mark(_msg_id(h), "dismissed", user)})
+
+
+def r_wa_pending(h, user, q):
+    return h.send_json(200, {"messages": db.rows(
+        "SELECT w.*, t.title FROM wa_messages w LEFT JOIN trips t ON t.id = w.trip_id WHERE w.state = 'pending' ORDER BY w.id")})
+
+
+def r_trip_wa_opened(h, user, q, tid):
+    b = h.body()
+    trip = core.load_trip(tid)
+    if not trip:
+        raise KeyError(tid)
+    core.wa_log_opened(trip, str(b.get("traveler", "")), str(b.get("body", "")), user)
+    return h.send_json(200, {})
+
+
 def r_wa_messages(h, user, q):
     return h.send_json(200, {"messages": db.rows(
         "SELECT w.*, t.title FROM wa_messages w LEFT JOIN trips t ON t.id = w.trip_id ORDER BY w.id DESC LIMIT 150")})
@@ -482,6 +516,10 @@ ROUTES = {
     ("POST", "/emails/retry"): r_email_retry,
     ("POST", "/whatsapp/test"): r_wa_test,
     ("GET", "/whatsapp/messages"): r_wa_messages,
+    ("GET", "/whatsapp/pending"): r_wa_pending,
+    ("POST", "/whatsapp/opened"): r_wa_opened,
+    ("POST", "/whatsapp/dismiss"): r_wa_dismiss,
+    ("POST", "/trips/:id/whatsapp/opened"): r_trip_wa_opened,
 }
 
 

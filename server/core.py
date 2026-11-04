@@ -311,7 +311,8 @@ def seg_line(s):
 
 
 def compose(trip, kind, segment=None, traveler_name=""):
-    first = (traveler_name or "there").split()[0].title()
+    words = [w for w in re.split(r"[\s.]+", traveler_name or "") if w and w.lower() not in HONORIFICS]
+    first = words[0].title() if words else "there"
     segs = [s for s in trip["segments"] if s["status"] != "cancelled"] or trip["segments"]
     sign = "\n\n— Stark Travel Desk"
     if kind == "new_trip":
@@ -395,14 +396,17 @@ def dispatch(trip, kind, actor, segment=None, body=None, only=None):
         if only and t["name"] not in only:
             continue
         entry = directory.get(t.get("traveler_id"))
-        name = t["name"] or "Traveller"
-        text = body or compose(trip, kind, segment, t["name"])
+        name = (entry or {}).get("name") or t["name"] or "Traveller"
+        text = body or compose(trip, kind, segment, name)
         rec = {"trip_id": trip["id"], "segment_id": segment["id"] if segment else None, "traveler": name,
                "to_phone": "", "body": text, "trigger": kind, "provider_id": "", "error": ""}
         if not entry or not entry.get("phone"):
             rec.update(state="skipped", error=f"No WhatsApp number saved for {name}.")
         elif not entry.get("notify") and kind != "manual":
             rec.update(state="skipped", error=f"{name} has automatic updates turned off.", to_phone=entry["phone"])
+        elif not wa_ready():
+            # Click-to-chat mode: queue it on the dashboard's "Needs sending" list.
+            rec.update(state="pending", to_phone=entry["phone"])
         else:
             rec["to_phone"] = entry["phone"]
             try:
@@ -411,16 +415,53 @@ def dispatch(trip, kind, actor, segment=None, body=None, only=None):
             except RuntimeError as e:
                 rec.update(state="failed", error=str(e))
         with db.tx() as c:
+            if rec["state"] == "pending":
+                # A newer update replaces an unsent older one for the same person and leg.
+                c.execute("UPDATE wa_messages SET state='dismissed', error='Replaced by a newer update' WHERE state='pending' "
+                          "AND trip_id=? AND traveler=? AND COALESCE(segment_id,'')=COALESCE(?,'') AND trigger IN (?, 'new_trip')",
+                          (rec["trip_id"], rec["traveler"], rec["segment_id"], kind))
             c.execute("INSERT INTO wa_messages(trip_id, segment_id, traveler, to_phone, body, trigger, state, provider_id, error, at) "
                       "VALUES(?,?,?,?,?,?,?,?,?,?)", (rec["trip_id"], rec["segment_id"], rec["traveler"], rec["to_phone"], rec["body"],
                                                       rec["trigger"], rec["state"], rec["provider_id"], rec["error"], db.now()))
-            label = {"new_trip": "booking confirmation", "status": "status update", "reminder": "departure reminder",
-                     "manual": "trip details"}.get(kind, kind)
+            label = WA_LABEL.get(kind, kind)
             msg = {"sent": f"WhatsApp {label} sent to {name}", "failed": f"WhatsApp {label} to {name} failed: {rec['error']}",
-                   "skipped": f"WhatsApp {label} not sent: {rec['error']}"}[rec["state"]]
+                   "skipped": f"WhatsApp {label} not sent: {rec['error']}",
+                   "pending": f"WhatsApp {label} for {name} is ready to send"}[rec["state"]]
             db.add_log(trip["id"], actor, "whatsapp", msg, c)
         results.append(rec)
     return results
+
+
+WA_LABEL = {"new_trip": "booking confirmation", "status": "status update", "reminder": "departure reminder",
+            "manual": "trip details"}
+
+
+def wa_mark(mid, state, actor):
+    """Click-to-chat: an admin opened a queued message in WhatsApp (state 'opened') or skipped it ('dismissed')."""
+    with db.tx() as c:
+        r = c.execute("SELECT * FROM wa_messages WHERE id=?", (mid,)).fetchone()
+        if not r:
+            raise KeyError(mid)
+        if r["state"] != "pending":
+            return dict(r)
+        c.execute("UPDATE wa_messages SET state=?, at=? , error=? WHERE id=?",
+                  (state, db.now(), "" if state == "opened" else f"Skipped by {actor}", mid))
+        label = WA_LABEL.get(r["trigger"], r["trigger"])
+        if r["trip_id"]:
+            db.add_log(r["trip_id"], actor, "whatsapp",
+                       f"Opened WhatsApp {label} for {r['traveler']}" if state == "opened" else f"Skipped WhatsApp {label} for {r['traveler']}", c)
+        return dict(c.execute("SELECT * FROM wa_messages WHERE id=?", (mid,)).fetchone())
+
+
+def wa_log_opened(trip, traveler, body, actor):
+    """Manual 'Send to WhatsApp' in click-to-chat mode: record that the admin opened the chat."""
+    entry = next((p for p in trip["travelers"] if p["name"] == traveler), None)
+    if not entry or not entry.get("phone"):
+        raise ValueError(f"No WhatsApp number saved for {traveler}.")
+    with db.tx() as c:
+        c.execute("INSERT INTO wa_messages(trip_id, segment_id, traveler, to_phone, body, trigger, state, provider_id, error, at) "
+                  "VALUES(?,?,?,?,?,?,?,?,?,?)", (trip["id"], None, traveler, entry["phone"], body[:3500], "manual", "opened", "", "", db.now()))
+        db.add_log(trip["id"], actor, "whatsapp", f"Opened WhatsApp trip details for {traveler}", c)
 
 
 def auto_enabled(key):

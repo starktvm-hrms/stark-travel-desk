@@ -200,4 +200,4 @@ cat > "$CRON_FILE" <<CRON
 CRON
 chmod 644 "$CRON_FILE"
 
-say "Done. Open https://${DOMAIN} and sign in. Then: Settings → Gmail, DeepSeek API key, WhatsApp."
+say "Done. Open https://${DOMAIN} and sign in. Then: Settings → Gmail and DeepSeek API key."

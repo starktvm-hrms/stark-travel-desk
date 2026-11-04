@@ -9,7 +9,8 @@ starkpeople.in; the app only adds its own files and leaves the other sites alone
 Gmail inbox ──(Gmail API, read-only)──▶ server/ on the Hostinger VPS ──▶ SQLite (/var/lib/stark-travel)
                                             │   Stark Decoder: DeepSeek reads email text + PDF ticket text
                                             ▼
-                                   WhatsApp Cloud API (Meta)
+              "Needs sending" list → admin clicks Open in WhatsApp (wa.me click-to-chat)
+              (optional: automatic sending through the WhatsApp Cloud API)
 ```
 
 ## What it does
@@ -23,8 +24,10 @@ Gmail inbox ──(Gmail API, read-only)──▶ server/ on the Hostinger VPS �
   Admins can also merge trips by hand.
 - **Trip cards**: mode and status, title, travellers, entry log, itinerary timeline,
   and *Track Live Schedule* / *Edit Trip* / *Send to WhatsApp*.
-- **Automatic WhatsApp**: new booking itinerary, segment status changes (from emails or admin edits),
-  and a departure / check-in reminder N hours before (default 3). Every send, skip and failure is logged.
+- **WhatsApp updates**: new booking itinerary, segment status changes (from emails or admin edits),
+  and a departure / check-in reminder N hours before (default 3). In click-to-chat mode (default, no setup)
+  they wait under *Needs sending*; each one opens WhatsApp with the message filled in. Every send, skip
+  and open is logged.
 - **Travellers directory**: WhatsApp numbers, other spellings ("MR TONY STARK"), per-person opt-out.
   Names on bookings are matched to it.
 - Admin sign-in (PBKDF2 passwords, HttpOnly session cookie, same-origin checks, login rate limit).
@@ -47,9 +50,10 @@ Gmail inbox ──(Gmail API, read-only)──▶ server/ on the Hostinger VPS �
    curl -fsSL https://raw.githubusercontent.com/starktvm-hrms/stark-travel-desk/main/deploy/vps-setup.sh -o /tmp/travel-setup.sh && sudo bash /tmp/travel-setup.sh
    ```
    It asks for the first admin username and password. Pushes to `main` go live within 5 minutes.
-2. **WhatsApp**: dashboard → Settings → WhatsApp: a permanent Meta system-user token, the sending number's
-   Phone number ID, and an approved Utility template whose body is a single `{{1}}` (needed to message
-   travellers who haven't written to the number in the last 24 hours).
+2. **WhatsApp** works out of the box in click-to-chat mode: automatic updates (new booking, status change,
+   departure reminder) are queued under *Needs sending* on the Trips page, and an admin clicks
+   *Open in WhatsApp* and presses Send. To send automatically instead, add a WhatsApp Cloud API token,
+   phone number ID and approved `{{1}}` Utility template under Settings → WhatsApp.
 3. **Gmail**: Settings → Gmail shows the redirect URI and the Google Cloud steps; press *Connect Gmail*.
 4. **DeepSeek API key**: Settings → Stark Decoder (key from platform.deepseek.com; the account needs a balance).
 
