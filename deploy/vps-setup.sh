@@ -8,7 +8,7 @@
 #
 # What it ADDS (nothing existing is edited or removed):
 #   /var/www/travel.starkpeople.in/          a checkout of the repo's main branch (web/ is served, server/ runs the API)
-#   /opt/stark-travel-venv/                   Python virtualenv with the Anthropic SDK (for Stark Decoder)
+#   /opt/stark-travel-venv/                   Python virtualenv with pypdf (reads PDF tickets for Stark Decoder)
 #   /etc/systemd/system/stark-travel.service  the API on 127.0.0.1:${TRAVEL_PORT:-8795}, run as user `stark-travel`
 #   /var/lib/stark-travel/                    the SQLite database (trips, travellers, settings) + daily backups
 #   nginx site file for travel.starkpeople.in sites-available + symlink, or conf.d
@@ -200,4 +200,4 @@ cat > "$CRON_FILE" <<CRON
 CRON
 chmod 644 "$CRON_FILE"
 
-say "Done. Open https://${DOMAIN} and sign in. Then: Settings → Gmail, Claude API key, WhatsApp function."
+say "Done. Open https://${DOMAIN} and sign in. Then: Settings → Gmail, DeepSeek API key, WhatsApp."

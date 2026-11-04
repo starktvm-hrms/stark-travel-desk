@@ -533,7 +533,8 @@ def sync_gmail(force_ids=None):
         query = db.get_setting("gmail_query", "") or gmail.DEFAULT_QUERY
         ids = force_ids or g.search(query, limit=int(db.get_setting("gmail_max", 40) or 40))
         done = {r["gmail_id"]: r["state"] for r in db.rows("SELECT gmail_id, state FROM emails")}
-        api_key = db.get_setting("anthropic_api_key", "")
+        api_key = db.get_setting("deepseek_api_key", "")
+        model = db.get_setting("deepseek_model", "") or None
         for mid in ids:
             if not force_ids and done.get(mid) in ("parsed", "ignored"):
                 continue
@@ -550,7 +551,7 @@ def sync_gmail(force_ids=None):
                     received = int(msg.get("internalDate", 0)) / 1000 or None
                 pdfs = gmail.fetch_pdfs(g, mid, pdf_refs)
                 rec_str = datetime.fromtimestamp(received, TZ).isoformat() if received else ""
-                parsed = decoder.decode(api_key, subject, sender, rec_str, text, pdfs)
+                parsed = decoder.decode(api_key, subject, sender, rec_str, text, pdfs, model)
                 if not parsed.get("is_travel_booking") or not parsed.get("segments"):
                     state, trip_id, err = "ignored", None, ""
                     summary["ignored"] += 1

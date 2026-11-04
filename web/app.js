@@ -131,7 +131,7 @@
     const hasNumbers = S.trips.length === 0 || S.trips.some((t) => t.travelers.some((p) => p.phone));
     const steps = [
       [st.gmail_connected, "Connect the travel inbox", st.gmail_connected ? `Reading ${esc(st.gmail_account || "Gmail")}` : "Settings → Gmail. Needs a Google OAuth client."],
-      [st.decoder_ready, "Add the Claude API key", "Stark Decoder reads tickets and booking emails."],
+      [st.decoder_ready, "Add the DeepSeek API key", "Stark Decoder reads tickets and booking emails."],
       [st.whatsapp_ready, "Connect WhatsApp sending", "Meta access token and phone number ID in Settings."],
       [hasNumbers && S.travelers.length > 0, "Save travellers' WhatsApp numbers", "Travellers tab. Names are matched to bookings."],
     ];
@@ -418,8 +418,9 @@
         <div class="actions"><button type="button" class="btn primary" data-act="gmail-connect">${st.gmail_connected ? "Reconnect Gmail" : "Connect Gmail"}</button>${st.gmail_connected ? `<button type="button" class="btn danger" data-act="gmail-disconnect">Disconnect</button>` : ""}</div>
       </section>
       <section class="card-s"><h2>Stark Decoder ${st.decoder_ready ? `<span class="ok-tag">Ready</span>` : `<span class="no-tag">Needs API key</span>`}</h2>
-        <p>Claude reads each booking email and its PDF tickets and turns them into trip segments. Same booking seen again updates the trip; bookings for the same traveller within 3 days are grouped into one trip.</p>
-        <div class="field"><label for="ak">Claude API key</label><input id="ak" name="anthropic_api_key" type="password" autocomplete="off" placeholder="${secretPh("anthropic_api_key") || "sk-ant-…"}"><span class="hint">From <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>. Stored only on this server.</span></div>
+        <p>DeepSeek reads each booking email and its PDF tickets and turns them into trip segments. Same booking seen again updates the trip; bookings for the same traveller within 3 days are grouped into one trip.</p>
+        <div class="field"><label for="ak">DeepSeek API key</label><input id="ak" name="deepseek_api_key" type="password" autocomplete="off" placeholder="${secretPh("deepseek_api_key") || "sk-…"}"><span class="hint">From <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">platform.deepseek.com</a>. The account needs a positive balance. Stored only on this server.</span></div>
+        <div class="field"><label for="dsm">Model</label><input id="dsm" name="deepseek_model" value="${esc(s.deepseek_model || "")}" placeholder="deepseek-chat"><span class="hint">Leave empty for deepseek-chat. PDF tickets are converted to text on this server before they're sent.</span></div>
       </section>
       <section class="card-s"><h2>WhatsApp sending ${st.whatsapp_ready ? `<span class="ok-tag">Connected</span>` : `<span class="no-tag">Not connected</span>`}</h2>
         <p>Sent straight from this server through the WhatsApp Cloud API (Meta). The token is stored only on this server.</p>

@@ -7,7 +7,7 @@ starkpeople.in; the app only adds its own files and leaves the other sites alone
 
 ```
 Gmail inbox ──(Gmail API, read-only)──▶ server/ on the Hostinger VPS ──▶ SQLite (/var/lib/stark-travel)
-                                            │   Stark Decoder: Claude reads email text + PDF tickets
+                                            │   Stark Decoder: DeepSeek reads email text + PDF ticket text
                                             ▼
                                    WhatsApp Cloud API (Meta)
 ```
@@ -16,7 +16,7 @@ Gmail inbox ──(Gmail API, read-only)──▶ server/ on the Hostinger VPS �
 
 - **Gmail sync** every 10 minutes (configurable). Searches for booking, ticket, ride and hotel emails
   (IRCTC, airlines, Uber/Ola, MakeMyTrip, hotels…), reads the body and attached PDF tickets.
-- **Stark Decoder** (Claude, `claude-opus-5-5`, structured JSON output) extracts every leg: type, status
+- **Stark Decoder** (DeepSeek, `deepseek-chat` by default, JSON output mode; PDF tickets are converted to text with pypdf) extracts every leg: type, status
   (CNF / RAC / Reserved…), from/to, dates and times, train/flight/vehicle number, PNR, coach/berth/class.
 - **Trip grouping**: the same PNR/booking seen again updates the existing card (status changes are logged
   and messaged); bookings for the same traveller within 3 days are grouped into one Multi-Mode trip.
@@ -36,7 +36,7 @@ Gmail inbox ──(Gmail API, read-only)──▶ server/ on the Hostinger VPS �
 | `web/` | Static dashboard (vanilla JS, no build step), served by nginx |
 | `server/app.py` | HTTP API on 127.0.0.1 (stdlib), routes under `/api/` |
 | `server/core.py` | Trips, grouping, WhatsApp Cloud API sending, reminders, Gmail sync loop |
-| `server/decoder.py` | Stark Decoder (Anthropic SDK) |
+| `server/decoder.py` | Stark Decoder (DeepSeek chat completions API, stdlib HTTP) |
 | `server/gmail.py` | Gmail REST API client (OAuth 2.0, read-only scope) |
 | `deploy/vps-setup.sh` | One-time VPS setup (nginx site, systemd, certbot, auto-update cron, backups) |
 
@@ -51,7 +51,7 @@ Gmail inbox ──(Gmail API, read-only)──▶ server/ on the Hostinger VPS �
    Phone number ID, and an approved Utility template whose body is a single `{{1}}` (needed to message
    travellers who haven't written to the number in the last 24 hours).
 3. **Gmail**: Settings → Gmail shows the redirect URI and the Google Cloud steps; press *Connect Gmail*.
-4. **Claude API key**: Settings → Stark Decoder.
+4. **DeepSeek API key**: Settings → Stark Decoder (key from platform.deepseek.com; the account needs a balance).
 
 Manage admins on the server:
 ```bash

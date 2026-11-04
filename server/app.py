@@ -31,9 +31,9 @@ COOKIE = "std_session"
 SESSION_DAYS = 14
 MAX_BODY = 2 * 1024 * 1024
 
-SECRET_KEYS = {"gmail_client_secret", "gmail_refresh_token", "anthropic_api_key", "wa_token"}
+SECRET_KEYS = {"gmail_client_secret", "gmail_refresh_token", "deepseek_api_key", "wa_token"}
 SETTING_KEYS = {"gmail_client_id", "gmail_client_secret", "gmail_query", "gmail_max", "sync_minutes",
-                "anthropic_api_key", "wa_token", "wa_phone_number_id", "wa_template_name", "wa_template_lang",
+                "deepseek_api_key", "deepseek_model", "wa_token", "wa_phone_number_id", "wa_template_name", "wa_template_lang",
                 "auto_new_trip", "auto_status", "reminder_hours"}
 
 
@@ -305,7 +305,7 @@ def status_info():
         "gmail_connected": bool(db.get_setting("gmail_refresh_token", "")),
         "gmail_account": db.get_setting("gmail_account", ""),
         "gmail_last_sync": db.get_setting("gmail_last_sync", None),
-        "decoder_ready": bool(db.get_setting("anthropic_api_key", "")),
+        "decoder_ready": bool(db.get_setting("deepseek_api_key", "")),
         "whatsapp_ready": core.wa_ready(),
         "sync_minutes": db.get_setting("sync_minutes", 10),
         "background_error": db.get_setting("background_error", None),
@@ -339,7 +339,7 @@ def r_settings_save(h, user, q):
             v = bool(v)
         if k == "wa_phone_number_id" and v and not re.fullmatch(r"\d{6,20}", str(v).strip()):
             raise ValueError("The phone number ID is the long number from Meta's API setup page, not the phone number itself.")
-        if k in ("wa_phone_number_id", "wa_template_name", "wa_template_lang") and isinstance(v, str):
+        if k in ("wa_phone_number_id", "wa_template_name", "wa_template_lang", "deepseek_model") and isinstance(v, str):
             v = v.strip()
         db.set_setting(k, v)
     if b.get("clear_gmail"):
