@@ -187,6 +187,40 @@ class Handler(BaseHTTPRequestHandler):
 
 # ---------------------------------------------------------------- route handlers
 
+APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def version_info():
+    """The deployed commit, read straight from the checkout's .git (no git binary needed)."""
+    g = os.path.join(APP_ROOT, ".git")
+    info = {"commit": "", "updated_at": None, "checked_at": None}
+    try:
+        head = open(os.path.join(g, "HEAD")).read().strip()
+        if head.startswith("ref: "):
+            ref = head[5:]
+            p = os.path.join(g, ref)
+            if os.path.exists(p):
+                info["commit"] = open(p).read().strip()
+                info["updated_at"] = os.path.getmtime(p)
+            elif os.path.exists(os.path.join(g, "packed-refs")):
+                for line in open(os.path.join(g, "packed-refs")):
+                    if line.strip().endswith(" " + ref):
+                        info["commit"] = line.split()[0]
+        else:
+            info["commit"] = head
+        fh = os.path.join(g, "FETCH_HEAD")
+        if os.path.exists(fh):
+            info["checked_at"] = os.path.getmtime(fh)
+    except OSError:
+        pass
+    info["commit"] = info["commit"][:40]
+    return info
+
+
+def r_version(h, user, q):
+    return h.send_json(200, version_info())
+
+
 def r_me(h, user, q):
     return h.send_json(200, {"user": user})
 
@@ -424,6 +458,7 @@ def r_wa_messages(h, user, q):
 
 ROUTES = {
     ("GET", "/me"): r_me,
+    ("GET", "/version"): r_version,
     ("POST", "/logout"): r_logout,
     ("POST", "/password"): r_password,
     ("GET", "/trips"): r_trips,

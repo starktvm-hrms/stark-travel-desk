@@ -441,9 +441,20 @@
       </section>
       <div class="actions" style="grid-column:1/-1"><button type="submit" class="btn primary">Save settings</button><span class="err" id="sErr"></span></div>
     </form>
+    <section class="card-s" id="verCard" style="margin-top:16px;max-width:560px"><h2>Site version</h2><p id="verText">Checking…</p></section>
     <form class="card-s" id="pwForm" style="margin-top:16px;max-width:560px"><h2>Your password</h2>
       <div class="row2"><div class="field"><label for="pw1">Current password</label><input id="pw1" type="password" autocomplete="current-password"></div><div class="field"><label for="pw2">New password</label><input id="pw2" type="password" autocomplete="new-password" minlength="10"></div></div>
       <div class="actions"><button class="btn" type="submit">Change password</button><span class="err" id="pwErr"></span></div></form>`;
+    showVersion();
+  }
+  async function showVersion() {
+    const el = $("#verText"); if (!el) return;
+    try {
+      const v = await api("/version");
+      el.innerHTML = v.commit
+        ? `Running <a class="mono" href="https://github.com/starktvm-hrms/stark-travel-desk/commit/${esc(v.commit)}" target="_blank" rel="noopener">${esc(v.commit.slice(0, 7))}</a>, installed ${ago(v.updated_at)}. New changes on GitHub install automatically every 5 minutes${v.checked_at ? `; last checked ${ago(v.checked_at)}` : ""}.`
+        : "Version unknown: this copy isn't a Git checkout, so it won't update itself. Run the setup script on the server.";
+    } catch (e) { el.textContent = e.message; }
   }
   async function saveSettings(extra = {}) {
     const f = $("#setForm"); const body = { ...extra };
@@ -566,6 +577,21 @@
     }
     try { await Promise.all([loadTrips(), loadTravellers()]); } catch (e) { toast(e.message, true); }
     render();
+    // Auto-update: when the server installs a new version, offer a reload so this tab runs it too.
+    let loaded = null;
+    try { loaded = (await api("/version")).commit; } catch { /* ignore */ }
+    setInterval(async () => {
+      if (document.hidden || !loaded) return;
+      try {
+        const v = await api("/version");
+        if (v.commit && v.commit !== loaded && !$("#updBar")) {
+          const bar = document.createElement("div"); bar.id = "updBar"; bar.className = "upd-bar";
+          bar.innerHTML = `<span>A new version of the travel desk was installed.</span><button class="btn sm primary" type="button">Reload now</button>`;
+          bar.querySelector("button").addEventListener("click", () => location.reload());
+          document.body.appendChild(bar);
+        }
+      } catch { /* offline */ }
+    }, 120000);
     setInterval(async () => { if (document.hidden || $("#layer").innerHTML || S.view !== "trips") return; try { await loadTrips(); if (document.activeElement && document.activeElement.id === "q") renderTripList(); else renderTrips(); } catch { /* offline */ } }, 60000);
   }
   boot();

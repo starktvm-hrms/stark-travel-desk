@@ -293,3 +293,4 @@ details.howto ol { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 4px;
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 .field input[type="checkbox"], .check input[type="checkbox"] { width: 16px; height: 16px; flex: none; padding: 0; }
 .recip .grow b { display: block; }
+.upd-bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(20px + env(safe-area-inset-bottom, 0px)); z-index: 55; display: flex; gap: 12px; align-items: center; background: var(--surface); border: 1px solid var(--blue-line); box-shadow: var(--shadow-lg); border-radius: 12px; padding: 10px 12px 10px 16px; font-weight: 600; max-width: calc(100vw - 32px); flex-wrap: wrap; }
