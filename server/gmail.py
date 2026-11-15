@@ -12,12 +12,43 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 API = "https://gmail.googleapis.com/gmail/v1/users/me"
 SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 
-DEFAULT_QUERY = ('newer_than:45d -category:promotions -category:social '
-                 '(subject:(booking OR ticket OR "e-ticket" OR itinerary OR reservation OR PNR OR '
-                 'confirmation OR trip OR ride OR receipt OR "check-in") '
-                 'OR from:(irctc.co.in OR uber.com OR olacabs.com OR makemytrip.com OR goibibo.com OR '
-                 'cleartrip.com OR ixigo.com OR redbus.in OR goindigo.in OR airindia.com OR akasaair.com OR '
-                 'spicejet.com OR booking.com OR agoda.com OR oyorooms.com OR marriott.com OR tajhotels.com))')
+DEFAULT_TERMS = ["booking", "ticket", "e-ticket", "itinerary", "reservation", "PNR", "confirmation",
+                 "trip", "ride", "receipt", "check-in"]
+DEFAULT_SENDERS = ["irctc.co.in", "uber.com", "olacabs.com", "makemytrip.com", "goibibo.com", "cleartrip.com",
+                   "ixigo.com", "redbus.in", "goindigo.in", "airindia.com", "akasaair.com", "spicejet.com",
+                   "booking.com", "agoda.com", "oyorooms.com", "marriott.com", "tajhotels.com"]
+DEFAULT_DAYS = 45
+
+
+def _q(term):
+    """Quote a search word for Gmail when it has spaces or punctuation."""
+    term = term.strip().replace('"', "")
+    return f'"{term}"' if re.search(r"[^\w.@]", term) else term
+
+
+def clean_list(items, limit=50):
+    out, seen = [], set()
+    for x in items or []:
+        x = re.sub(r"\s+", " ", str(x)).strip().strip(",;")
+        if x and x.lower() not in seen and len(x) <= 80:
+            seen.add(x.lower())
+            out.append(x)
+    return out[:limit]
+
+
+def build_query(keywords=(), senders=(), days=DEFAULT_DAYS):
+    """Built-in booking words and travel senders, plus the admin's extra keywords and senders (any one matches)."""
+    terms = clean_list(list(DEFAULT_TERMS) + list(keywords), 120)
+    froms = clean_list(list(DEFAULT_SENDERS) + list(senders), 120)
+    # Keywords match the subject or the body; built-in words match the subject only, to keep newsletters out.
+    extra = " OR ".join(_q(k) for k in clean_list(keywords))
+    parts = [f"subject:({' OR '.join(_q(t) for t in terms)})", f"from:({' OR '.join(_q(f) for f in froms)})"]
+    if extra:
+        parts.append(f"({extra})")
+    return f"newer_than:{int(days)}d -category:promotions -category:social ({' OR '.join(parts)})"
+
+
+DEFAULT_QUERY = build_query()
 
 
 class GmailError(Exception):

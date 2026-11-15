@@ -450,7 +450,17 @@
         <div class="field"><label for="gcs">OAuth client secret</label><input id="gcs" name="gmail_client_secret" type="password" autocomplete="off" placeholder="${secretPh("gmail_client_secret")}"></div>
         <div class="row2"><div class="field"><label for="gmin">Check every (minutes)</label><input id="gmin" name="sync_minutes" type="number" min="5" max="200" value="${esc(s.sync_minutes ?? 10)}"></div>
           <div class="field"><label for="gmax">Emails per check</label><input id="gmax" name="gmail_max" type="number" min="1" max="200" value="${esc(s.gmail_max ?? 40)}"></div></div>
-        <div class="field"><label for="gq">Gmail search</label><textarea id="gq" name="gmail_query" rows="3" placeholder="${esc(s.default_gmail_query)}">${esc(s.gmail_query || "")}</textarea><span class="hint">Leave empty for the default, which finds booking, ticket and ride emails from the last 45 days.</span></div>
+        <div id="kwField">${chipField("kw")}</div>
+        <div id="sndField">${chipField("snd")}</div>
+        <div class="field"><label for="gdays">Look back (days)</label><input id="gdays" name="gmail_days" type="number" min="1" max="365" value="${esc(s.gmail_days)}" style="max-width:140px"></div>
+        <details class="howto"><summary>Built-in words and senders, and the exact search</summary>
+          <p style="margin:8px 0 4px">Always included: ${s.default_terms.map((t) => `<span class="mini-chip">${esc(t)}</span>`).join(" ")}</p>
+          <p style="margin:4px 0">Always included senders: ${s.default_senders.map((t) => `<span class="mini-chip">${esc(t)}</span>`).join(" ")}</p>
+          <div class="field" style="margin-top:8px"><span class="lab">Search sent to Gmail</span><pre class="msg-pre mono" id="qPreview" style="font-size:12px">${esc(s.effective_gmail_query)}</pre></div>
+        </details>
+        <details class="howto" ${s.gmail_query ? "open" : ""}><summary>Advanced: write the Gmail search yourself</summary>
+          <div class="field" style="margin-top:8px"><label for="gq">Gmail search</label><textarea id="gq" name="gmail_query" rows="3" placeholder="newer_than:30d from:irctc.co.in">${esc(s.gmail_query || "")}</textarea>
+          <span class="hint">Uses <a href="https://support.google.com/mail/answer/7190" target="_blank" rel="noopener">Gmail search syntax</a>. When filled in, it replaces the keywords, senders and built-in words above. Leave empty to use them.</span></div></details>
         <div class="actions"><button type="button" class="btn primary" data-act="gmail-connect">${st.gmail_connected ? "Reconnect Gmail" : "Connect Gmail"}</button>${st.gmail_connected ? `<button type="button" class="btn danger" data-act="gmail-disconnect">Disconnect</button>` : ""}</div>
       </section>
       <section class="card-s"><h2>Stark Decoder ${st.decoder_ready ? `<span class="ok-tag">Ready</span>` : `<span class="no-tag">Needs API key</span>`}</h2>
@@ -497,9 +507,47 @@
         : "Version unknown: this copy isn't a Git checkout, so it won't update itself. Run the setup script on the server.";
     } catch (e) { el.textContent = e.message; }
   }
+  // ---- keyword / sender chips for the Gmail search
+  const CHIP = {
+    kw: { key: "gmail_keywords", label: "Extra keywords", ph: "Type a word or phrase, then press Enter", hint: "Emails with any of these words in the subject or body are read too, on top of the built-in booking words." },
+    snd: { key: "gmail_senders", label: "Extra senders", ph: "e.g. bookings@ourtravelagent.in or ourtravelagent.in", hint: "Everything from these addresses or domains is read, whatever the subject." },
+  };
+  function chipField(which) {
+    const c = CHIP[which], items = S.settings[c.key] || [];
+    return `<div class="field"><label for="chip-${which}">${c.label}</label>
+      <div class="tags" data-chips="${which}">${items.map((t, i) => `<span>${esc(t)}<button type="button" data-act="chip-rm" data-which="${which}" data-i="${i}" aria-label="Remove ${esc(t)}">×</button></span>`).join("")}
+        <input id="chip-${which}" class="chip-input" data-which="${which}" placeholder="${items.length ? "Add another…" : c.ph}" autocomplete="off"></div>
+      <span class="hint">${c.hint} Press Enter or type a comma to add each one.</span></div>`;
+  }
+  function addChips(which, text) {
+    const c = CHIP[which], list = S.settings[c.key] = S.settings[c.key] || [];
+    const have = new Set(list.map((x) => x.toLowerCase()));
+    String(text).split(/[,;\n]+/).map((x) => x.trim()).filter(Boolean).forEach((x) => { if (!have.has(x.toLowerCase())) { list.push(x); have.add(x.toLowerCase()); } });
+  }
+  function redrawChips(which, focus) {
+    const box = $(which === "kw" ? "#kwField" : "#sndField");
+    const old = box.querySelector(".chip-input"); if (old) old.value = "";   // already added; stop focusout re-adding it
+    box.innerHTML = chipField(which);
+    updatePreview();
+    if (focus) $("#chip-" + which).focus();
+  }
+  function previewQuery() {
+    const st = S.settings, raw = ($("#gq") && $("#gq").value.trim()) || "";
+    if (raw) return raw;
+    const q = (t) => (/[^\w.@]/.test(t) ? `"${t.replace(/"/g, "")}"` : t);
+    const uniq = (a) => { const seen = new Set(); return a.filter((x) => { const k = x.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }); };
+    const kw = uniq(st.gmail_keywords || []);
+    const parts = [`subject:(${uniq([...st.default_terms, ...kw]).map(q).join(" OR ")})`, `from:(${uniq([...st.default_senders, ...(st.gmail_senders || [])]).map(q).join(" OR ")})`];
+    if (kw.length) parts.push(`(${kw.map(q).join(" OR ")})`);
+    return `newer_than:${parseInt(($("#gdays") || {}).value, 10) || 45}d -category:promotions -category:social (${parts.join(" OR ")})`;
+  }
+  function updatePreview() { const el = $("#qPreview"); if (el) el.textContent = previewQuery(); }
+
   async function saveSettings(extra = {}) {
     const f = $("#setForm"); const body = { ...extra };
     f.querySelectorAll("[name]").forEach((el) => { body[el.name] = el.type === "checkbox" ? el.checked : el.value; });
+    document.querySelectorAll(".chip-input").forEach((inp) => { if (inp.value.trim()) { addChips(inp.dataset.which, inp.value); inp.value = ""; } });
+    if (S.settings && S.settings.default_terms) { body.gmail_keywords = S.settings.gmail_keywords || []; body.gmail_senders = S.settings.gmail_senders || []; }
     try { await api("/settings", { method: "PUT", body }); await loadTrips(); toast("Settings saved"); return true; }
     catch (e) { $("#sErr").textContent = e.message; return false; }
   }
@@ -606,6 +654,9 @@
       case "copy-redir": copy($("#redir").value, $("#redir")); break;
       case "gmail-connect": if (await saveSettings()) location.href = "/api/gmail/connect"; break;
       case "gmail-disconnect": if (await saveSettings({ clear_gmail: true })) renderSettings(); break;
+      case "chip-rm": {
+        const c = CHIP[a.dataset.which]; S.settings[c.key].splice(+a.dataset.i, 1); redrawChips(a.dataset.which, true); break;
+      }
       case "wa-api-off":
         if (!a.dataset.confirm) { a.dataset.confirm = "1"; a.textContent = "Click again to remove the token"; break; }
         try { await api("/settings", { method: "PUT", body: { clear_wa_api: true } }); toast("Switched to click-to-chat"); await loadTrips(); renderSettings(); } catch (ex) { toast(ex.message, true); }
@@ -620,6 +671,7 @@
   });
   document.addEventListener("input", (e) => {
     if (e.target.id === "q") { S.q = e.target.value; renderTripList(); }
+    if (e.target.id === "gq" || e.target.id === "gdays") updatePreview();
   });
   document.addEventListener("change", (e) => {
     if (e.target.id === "mode") { S.mode = e.target.value; renderTripList(); }
@@ -635,7 +687,32 @@
       catch (ex) { $("#pwErr").textContent = ex.message; }
     }
   });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("#layer").innerHTML) closeModal(); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && $("#layer").innerHTML) closeModal();
+    const t = e.target;
+    if (t.classList && t.classList.contains("chip-input")) {
+      if ((e.key === "Enter" || e.key === ",") && t.value.trim()) { e.preventDefault(); addChips(t.dataset.which, t.value); redrawChips(t.dataset.which, true); }
+      else if (e.key === "Enter") e.preventDefault();
+      else if (e.key === "Backspace" && !t.value) { const c = CHIP[t.dataset.which], l = S.settings[c.key] || []; if (l.length) { l.pop(); redrawChips(t.dataset.which, true); } }
+    }
+  });
+  document.addEventListener("paste", (e) => {
+    const t = e.target;
+    if (t.classList && t.classList.contains("chip-input")) {
+      const text = (e.clipboardData || window.clipboardData).getData("text");
+      if (/[,;\n]/.test(text)) { e.preventDefault(); addChips(t.dataset.which, t.value + "," + text); redrawChips(t.dataset.which, true); }
+    }
+  });
+  document.addEventListener("focusout", (e) => {
+    const t = e.target;
+    // Turn leftover text into a chip when the admin clicks away (not when the box is being redrawn).
+    if (t.classList && t.classList.contains("chip-input") && t.isConnected && t.value.trim() && !(e.relatedTarget && e.relatedTarget.classList && e.relatedTarget.classList.contains("chip-input"))) {
+      const which = t.dataset.which, text = t.value; t.value = "";
+      addChips(which, text);
+      const box = $(which === "kw" ? "#kwField" : "#sndField"), next = e.relatedTarget;
+      if (!(next && box.contains(next))) redrawChips(which, false);
+    }
+  });
 
   // ------------------------------------------------------------ boot
   async function boot() {

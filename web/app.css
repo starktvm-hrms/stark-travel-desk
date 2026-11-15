@@ -310,3 +310,6 @@ details.howto ol { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 4px;
 .pend summary { cursor: pointer; color: var(--blue); }
 .msg-pre { white-space: pre-wrap; font: 13px/1.5 var(--f); background: var(--sunk); border-radius: 8px; padding: 8px 10px; margin: 6px 0 0; overflow-wrap: anywhere; }
 .wa-meta.due { color: var(--amber); font-weight: 600; }
+.mini-chip { display: inline-block; font-size: 12px; background: var(--surface); border: 1px solid var(--line-2); border-radius: 6px; padding: 0 6px; margin: 2px 0; }
+.tags .chip-input { border: 0; outline: 0; flex: 1; min-width: 180px; padding: 4px; background: transparent; }
+.tags:focus-within { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-soft); }

@@ -562,6 +562,25 @@ def ingest(parsed, email_id, actor="Stark Decoder"):
     return tid, True, []
 
 
+def current_gmail_query():
+    """The Advanced raw search if one is set, otherwise built-in terms + the admin's keywords and senders."""
+    migrate_gmail_query()
+    raw = (db.get_setting("gmail_query", "") or "").strip()
+    if raw:
+        return raw
+    return gmail.build_query(db.get_setting("gmail_keywords", []) or [], db.get_setting("gmail_senders", []) or [],
+                             int(db.get_setting("gmail_days", gmail.DEFAULT_DAYS) or gmail.DEFAULT_DAYS))
+
+
+def migrate_gmail_query():
+    """Older versions had one free-text box. Plain words typed there (e.g. 'Travel, Trip') become keywords."""
+    raw = (db.get_setting("gmail_query", "") or "").strip()
+    if raw and not re.search(r"[:()\"]|\bOR\b|^-|\s-", raw):
+        words = [w for w in re.split(r"[,;\n]+", raw) if w.strip()]
+        db.set_setting("gmail_keywords", gmail.clean_list((db.get_setting("gmail_keywords", []) or []) + words))
+        db.set_setting("gmail_query", None)
+
+
 def sync_gmail(force_ids=None):
     """Pull new booking emails, decode them, create/update trips, and send automatic WhatsApp updates."""
     import decoder
@@ -571,7 +590,7 @@ def sync_gmail(force_ids=None):
     try:
         g = gmail.Gmail(db.get_setting("gmail_client_id", ""), db.get_setting("gmail_client_secret", ""),
                         db.get_setting("gmail_refresh_token", ""))
-        query = db.get_setting("gmail_query", "") or gmail.DEFAULT_QUERY
+        query = current_gmail_query()
         ids = force_ids or g.search(query, limit=int(db.get_setting("gmail_max", 40) or 40))
         done = {r["gmail_id"]: r["state"] for r in db.rows("SELECT gmail_id, state FROM emails")}
         api_key = db.get_setting("deepseek_api_key", "")

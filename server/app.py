@@ -33,6 +33,7 @@ MAX_BODY = 2 * 1024 * 1024
 
 SECRET_KEYS = {"gmail_client_secret", "gmail_refresh_token", "deepseek_api_key", "wa_token"}
 SETTING_KEYS = {"gmail_client_id", "gmail_client_secret", "gmail_query", "gmail_max", "sync_minutes",
+                "gmail_keywords", "gmail_senders", "gmail_days",
                 "deepseek_api_key", "deepseek_model", "wa_token", "wa_phone_number_id", "wa_template_name", "wa_template_lang",
                 "auto_new_trip", "auto_status", "reminder_hours"}
 
@@ -349,12 +350,18 @@ def status_info():
 
 
 def r_settings(h, user, q):
+    core.migrate_gmail_query()
     out = {}
     for k in SETTING_KEYS:
         v = db.get_setting(k, None)
         out[k] = ("set" if v else "") if k in SECRET_KEYS else v
-    out.setdefault("gmail_query", "")
-    out["default_gmail_query"] = gmail.DEFAULT_QUERY
+    out["gmail_query"] = out.get("gmail_query") or ""
+    out["gmail_keywords"] = out.get("gmail_keywords") or []
+    out["gmail_senders"] = out.get("gmail_senders") or []
+    out["gmail_days"] = out.get("gmail_days") or gmail.DEFAULT_DAYS
+    out["default_terms"] = gmail.DEFAULT_TERMS
+    out["default_senders"] = gmail.DEFAULT_SENDERS
+    out["effective_gmail_query"] = core.current_gmail_query()
     out["gmail_redirect_uri"] = BASE_URL + "/api/gmail/callback"
     out["status"] = status_info()
     return h.send_json(200, out)
@@ -367,6 +374,18 @@ def r_settings_save(h, user, q):
             continue
         if k in SECRET_KEYS and (v is None or v == "" or v == "set"):
             continue  # unchanged
+        if k in ("gmail_keywords", "gmail_senders"):
+            if isinstance(v, str):
+                v = v.split(",")
+            if not isinstance(v, list):
+                raise ValueError("Keywords must be a list.")
+            v = gmail.clean_list(v)
+            if k == "gmail_senders":
+                bad = [x for x in v if not re.fullmatch(r"[\w.+-]*@?[\w-]+(\.[\w-]+)+", x)]
+                if bad:
+                    raise ValueError(f"“{bad[0]}” isn't an email address or domain, e.g. bookings@company.com or airline.com.")
+        if k == "gmail_days":
+            v = max(1, min(365, int(v or gmail.DEFAULT_DAYS)))
         if k in ("gmail_max", "sync_minutes"):
             v = max(1, min(200, int(v or 0)))
         if k == "reminder_hours":
