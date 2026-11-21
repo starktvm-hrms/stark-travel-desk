@@ -33,7 +33,7 @@
   const S = {
     user: null, view: "trips", trips: [], status: {}, travelers: [], settings: null,
     sel: null, mobileDetail: false,
-    q: "", phase: "upcoming", mode: "", attention: false, special: "", sort: (() => { try { return localStorage.getItem("std-sort") || "soonest"; } catch { return "soonest"; } })(), openLogs: {}, logs: {},
+    q: "", phase: "all", mode: "", attention: false, special: "", sort: (() => { try { return localStorage.getItem("std-sort") || "soonest"; } catch { return "soonest"; } })(), openLogs: {}, logs: {},
     emails: [], wa: [], pending: [], busy: false,
   };
 
