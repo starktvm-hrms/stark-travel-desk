@@ -13,10 +13,11 @@ from zoneinfo import ZoneInfo
 
 import db
 import gmail
+import places
 
 TZ = ZoneInfo(os.environ.get("STARK_TZ", "Asia/Kolkata"))
 SEG_FIELDS = ["type", "status", "status_label", "origin", "destination", "date", "start_time",
-              "end_date", "end_time", "carrier", "number", "reference", "details"]
+              "end_date", "end_time", "carrier", "number", "reference", "details", "origin_tz", "destination_tz"]
 SEG_TYPES = {"flight", "train", "bus", "cab", "hotel", "other"}
 SEG_STATUSES = {"reserved", "confirmed", "waitlisted", "delayed", "completed", "cancelled"}
 STATUS_WORD = {"reserved": "Reserved", "confirmed": "Confirmed", "waitlisted": "Waitlisted",
@@ -38,9 +39,17 @@ def seg_start(s):
     try:
         d = date.fromisoformat(s["date"])
         hh, mm = (s.get("start_time") or "00:00").split(":")[:2]
-        return datetime(d.year, d.month, d.day, int(hh), int(mm), tzinfo=TZ)
+        return datetime(d.year, d.month, d.day, int(hh), int(mm), tzinfo=_zone(s.get("origin_tz")))
     except (ValueError, TypeError):
         return None
+
+
+def _zone(name):
+    """Ticket times are local to the station/airport/hotel; fall back to the desk's zone (India) when unknown."""
+    try:
+        return ZoneInfo(name) if name else TZ
+    except Exception:  # noqa: BLE001
+        return TZ
 
 
 def seg_end(s):
@@ -51,7 +60,7 @@ def seg_end(s):
         d = date.fromisoformat(d)
         t = s.get("end_time") or s.get("start_time") or "23:59"
         hh, mm = t.split(":")[:2]
-        return datetime(d.year, d.month, d.day, int(hh), int(mm), tzinfo=TZ)
+        return datetime(d.year, d.month, d.day, int(hh), int(mm), tzinfo=_zone(s.get("destination_tz") or s.get("origin_tz")))
     except (ValueError, TypeError):
         return None
 
@@ -89,7 +98,22 @@ def clean_seg(s):
             out[k] = f"{int(m.group(1)):02d}:{m.group(2)}" if m else None
     for k in ("status_label", "origin", "destination", "carrier", "number", "reference", "details"):
         out[k] = (out[k] or "")[:300]
+    # Time zones: a valid IANA name given by the decoder or an admin, otherwise guessed from the place name.
+    out["origin_tz"] = places.check_tz(out["origin_tz"]) or places.guess_tz(out["origin"], out["type"])
+    out["destination_tz"] = places.check_tz(out["destination_tz"]) or places.guess_tz(out["destination"], out["type"])
+    if out["type"] == "hotel":
+        out["origin_tz"] = out["destination_tz"]  # "Hotel Stay" → the hotel's own city
     return out
+
+
+def seg_zones(s):
+    """Fill in zones for segments saved before time zones existed (read-time only, nothing is written)."""
+    s = dict(s)
+    if not s.get("destination_tz"):
+        s["destination_tz"] = places.guess_tz(s.get("destination"), s.get("type"))
+    if not s.get("origin_tz"):
+        s["origin_tz"] = s["destination_tz"] if s.get("type") == "hotel" else places.guess_tz(s.get("origin"), s.get("type"))
+    return s
 
 
 HONORIFICS = {"mr", "mrs", "ms", "miss", "dr", "master", "shri", "smt", "sri", "kum", "prof"}
@@ -146,8 +170,18 @@ def decorate(t, segs=None, travelers=None, counts=None, lastwa=None):
         travelers = db.rows("SELECT * FROM travelers")
     names = json.loads(t["travelers"] or "[]")
     t = dict(t)
-    t["travelers"] = [{"name": n, "phone": (m or {}).get("phone", ""), "traveler_id": (m or {}).get("id")}
+    t["travelers"] = [{"name": n, "phone": (m or {}).get("phone", ""), "traveler_id": (m or {}).get("id"),
+                       "tz": (m or {}).get("tz", ""), "display_name": (m or {}).get("name", n)}
                       for n, m in ((n, match_traveler(n, travelers)) for n in names)]
+    segs = [seg_zones(s) for s in segs]
+    # Places with no recognisable city (e.g. "Grand Plaza Hotel") take the zone of the leg before or after them.
+    for i, s in enumerate(segs):
+        prev = next((x["destination_tz"] for x in reversed(segs[:i]) if x.get("destination_tz")), "")
+        nxt = next((x["origin_tz"] for x in segs[i + 1:] if x.get("origin_tz")), "")
+        if not s["origin_tz"]:
+            s["origin_tz"] = prev or s["destination_tz"] or nxt
+        if not s["destination_tz"]:
+            s["destination_tz"] = (s["origin_tz"] if s["type"] in ("hotel", "cab") else "") or nxt or s["origin_tz"]
     t["segments"] = segs
     t["phase"] = trip_phase(t, segs)
     t["modes"] = sorted({s["type"] for s in segs})

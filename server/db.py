@@ -119,12 +119,29 @@ def connect():
 _con = None
 
 
+# Columns added after the first release: (table, column, definition).
+_ADDED = [
+    ("segments", "origin_tz", "TEXT NOT NULL DEFAULT ''"),
+    ("segments", "destination_tz", "TEXT NOT NULL DEFAULT ''"),
+    ("travelers", "tz", "TEXT NOT NULL DEFAULT ''"),
+]
+
+
+def _migrate(c):
+    for table, col, ddl in _ADDED:
+        have = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
+        if col not in have:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+    c.commit()
+
+
 def con():
     global _con
     with _lock:
         if _con is None:
             _con = connect()
             _con.executescript(SCHEMA)
+            _migrate(_con)
             os.chmod(DB_FILE, 0o600)
         return _con
 

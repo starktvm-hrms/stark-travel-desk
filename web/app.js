@@ -22,6 +22,7 @@
     check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
     gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>',
   };
+  I.flight = I.plane;
   const MODE_COLOR = { flight: "var(--sky)", train: "var(--green)", bus: "var(--amber)", cab: "var(--violet)", hotel: "var(--ink-2)", other: "var(--muted)" };
   const TYPE_LABEL = { flight: "Flight", train: "Train", bus: "Bus", cab: "Cab", hotel: "Hotel Stay", other: "Booking" };
   const STATUSES = [["reserved", "Reserved"], ["confirmed", "Confirmed"], ["waitlisted", "Waitlisted"], ["delayed", "Delayed"], ["completed", "Completed"], ["cancelled", "Cancelled"]];
@@ -49,6 +50,71 @@
   }
   function waDigits(p) { let d = String(p || "").replace(/\D/g, ""); if (d.length === 10) d = "91" + d; return d; }
   const waLink = (phone, text) => `https://wa.me/${waDigits(phone)}?text=${encodeURIComponent(text || "")}`;
+  // ---- live local times
+  const HOME_TZ = "Asia/Kolkata";
+  const ZONE_NAME = {
+    "Asia/Kolkata": "India", "America/Toronto": "Toronto, Canada", "America/Vancouver": "Vancouver, Canada",
+    "America/Edmonton": "Calgary / Edmonton, Canada", "America/Winnipeg": "Winnipeg, Canada", "America/Regina": "Saskatchewan, Canada",
+    "America/Halifax": "Halifax, Canada", "America/St_Johns": "St. John's, Canada", "America/Montreal": "Montréal, Canada",
+  };
+  const zoneName = (tz) => ZONE_NAME[tz] || tz.split("/").pop().replace(/_/g, " ");
+  const isCanada = (tz) => /^America\/(Toronto|Vancouver|Edmonton|Winnipeg|Regina|Halifax|St_Johns|Montreal|Whitehorse|Yellowknife|Iqaluit|Moncton|Glace_Bay|Goose_Bay|Dawson_Creek|Creston|Fort_Nelson|Cambridge_Bay|Inuvik|Rankin_Inlet|Resolute|Swift_Current|Atikokan|Blanc-Sablon|Dawson)$/.test(tz);
+  function zoneOk(tz) { try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); return !!tz; } catch { return false; } }
+  function tzAbbr(tz, d = new Date()) {
+    if (tz === "Asia/Kolkata") return "IST";
+    try { return (new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "short" }).formatToParts(d).find((x) => x.type === "timeZoneName") || {}).value || ""; } catch { return ""; }
+  }
+  function tzOffsetMin(tz, d = new Date()) {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(d).map((x) => [x.type, x.value]));
+    const asUtc = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour % 24, +parts.minute);
+    return Math.round((asUtc - Math.floor(d.getTime() / 60000) * 60000) / 60000);
+  }
+  function vsIndia(tz, d = new Date()) {
+    if (tz === HOME_TZ) return "";
+    const diff = tzOffsetMin(tz, d) - tzOffsetMin(HOME_TZ, d);
+    if (!diff) return "same as India";
+    const h = Math.floor(Math.abs(diff) / 60), m = Math.abs(diff) % 60;
+    return `${h ? h + "h" : ""}${m ? (h ? " " : "") + m + "m" : ""} ${diff < 0 ? "behind" : "ahead of"} India`;
+  }
+  function clockParts(tz, d = new Date()) {
+    return {
+      time: new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" }).format(d),
+      day: new Intl.DateTimeFormat("en-GB", { timeZone: tz, weekday: "short", day: "numeric", month: "short" }).format(d),
+    };
+  }
+  function clockHTML(tz) {
+    const c = clockParts(tz);
+    return `<span class="clk-time" data-clock="${esc(tz)}">${esc(c.time)}</span><span class="clk-day" data-clockday="${esc(tz)}">${esc(c.day)}</span>`;
+  }
+  function tickClocks() {
+    const d = new Date();
+    document.querySelectorAll("[data-clock]").forEach((el) => { try { el.textContent = clockParts(el.dataset.clock, d).time; } catch { /* bad zone */ } });
+    document.querySelectorAll("[data-clockday]").forEach((el) => { try { el.textContent = clockParts(el.dataset.clockday, d).day; } catch { /* bad zone */ } });
+  }
+  setInterval(tickClocks, 15000);
+  // Where the traveller is now: last leg already started → its arrival; nothing started → first departure.
+  function hereNow(t) {
+    const now = Date.now(); let tz = "";
+    for (const s of t.segments) {
+      if (s.status === "cancelled" || !s.date) continue;
+      const start = new Date(`${s.date}T${s.start_time || "00:00"}:00`).getTime();   // approximate is fine for this marker
+      if (start <= now) tz = s.destination_tz || s.origin_tz || tz;
+    }
+    if (!tz) { const f = t.segments.find((s) => s.status !== "cancelled"); tz = f ? (f.origin_tz || f.destination_tz) : ""; }
+    return tz;
+  }
+  function clockStrip(t) {
+    const zones = [];
+    const add = (tz, who) => { if (!zoneOk(tz)) return; const z = zones.find((x) => x.tz === tz); if (z) { if (who && !z.who.includes(who)) z.who.push(who); } else zones.push({ tz, who: who ? [who] : [] }); };
+    t.segments.filter((s) => s.status !== "cancelled").forEach((s) => { add(s.origin_tz); add(s.destination_tz); });
+    t.travelers.forEach((p) => add(p.tz, (p.display_name || p.name).split(/\s+/).filter((w) => !/^(mr|mrs|ms|dr|miss)\.?$/i.test(w))[0]));
+    if (!zones.length) return "";
+    const here = hereNow(t);
+    return `<div class="clocks" aria-label="Local time now">${zones.map((z) => `<div class="clk ${isCanada(z.tz) ? "ca" : ""} ${z.tz === here && t.phase !== "completed" && t.phase !== "cancelled" ? "here" : ""}">
+        <span class="clk-where">${esc(zoneName(z.tz))}${z.tz === here && t.phase !== "completed" && t.phase !== "cancelled" ? `<em>${t.phase === "ongoing" ? "here now" : "starts here"}</em>` : ""}</span>
+        <span class="clk-now">${clockHTML(z.tz)}</span>
+        <span class="clk-meta">${esc(tzAbbr(z.tz))}${vsIndia(z.tz) ? " · " + esc(vsIndia(z.tz)) : ""}${z.who.length ? ` · home of ${esc(z.who.join(", "))}` : ""}</span></div>`).join("")}</div>`;
+  }
   const TRIG = { new_trip: "Booking confirmation", status: "Status change", reminder: "Departure reminder", manual: "Trip details", test: "Test" };
   const initials = (n) => (n || "?").split(/\s+/).filter(Boolean).slice(0, 2).map((x) => x[0]).join("").toUpperCase();
   function toast(msg, bad) {
@@ -197,7 +263,8 @@
     const kind = TYPE_LABEL[s.type] || "Booking";
     const label = s.status_label || SLABEL[s.status] || s.status;
     const whenLbl = s.type === "hotel" ? "Check-In" : "Departs";
-    const timeChip = s.start_time ? `<span class="timechip">${I.clock}Time: ${fmtTime(s.start_time)}${s.end_time ? ` → ${fmtTime(s.end_time)}` : ""}</span>` : "";
+    const zA = (tz) => (zoneOk(tz) && tz !== HOME_TZ ? ` <small>${esc(tzAbbr(tz))}</small>` : zoneOk(tz) && (s.origin_tz !== s.destination_tz) ? ` <small>IST</small>` : "");
+    const timeChip = s.start_time ? `<span class="timechip" title="Times as printed on the ticket, local to each place">${I.clock}Time: ${fmtTime(s.start_time)}${zA(s.origin_tz)}${s.end_time ? ` → ${fmtTime(s.end_time)}${zA(s.destination_tz || s.origin_tz)}` : ""}</span>` : "";
     const ident = [s.carrier, s.number].filter(Boolean).join(" ");
     const noteBits = [s.details, s.type !== "hotel" && ident && !(s.details || "").includes(s.number || "@@") ? ident : "", s.reference ? `Ref ${s.reference}` : ""].filter(Boolean);
     return `<li class="seg ${s.status === "cancelled" ? "cancelled" : ""}">
@@ -212,7 +279,7 @@
   }
   function tripCard(t) {
     const phaseLbl = { upcoming: "Upcoming", ongoing: "Ongoing", completed: "Completed", cancelled: "Cancelled" }[t.phase];
-    const people = t.travelers.length ? t.travelers.map((p) => `<div class="person"><span class="avatar">${esc(initials(p.name))}</span><div style="min-width:0"><b>${esc(p.name)}</b>${p.phone ? `<small class="mono">${esc(p.phone)}</small>` : `<small class="miss">No WhatsApp number · <button data-act="add-number" data-name="${esc(p.name)}">Add</button></small>`}</div></div>`).join("")
+    const people = t.travelers.length ? t.travelers.map((p) => `<div class="person"><span class="avatar">${esc(initials(p.name))}</span><div style="min-width:0"><b>${esc(p.name)}</b>${zoneOk(p.tz) && p.tz !== HOME_TZ ? `<small class="home-clk ${isCanada(p.tz) ? "ca" : ""}">${esc(zoneName(p.tz))} · <span data-clock="${esc(p.tz)}">${esc(clockParts(p.tz).time)}</span></small>` : ""}${p.phone ? `<small class="mono">${esc(p.phone)}</small>` : `<small class="miss">No WhatsApp number · <button data-act="add-number" data-name="${esc(p.name)}">Add</button></small>`}</div></div>`).join("")
       : `<div class="person"><span class="avatar">?</span><div><b>Not named in the email</b><small><button class="loglink" data-act="edit" data-id="${t.id}" style="color:var(--blue)">Add traveller</button></small></div></div>`;
     const open = S.openLogs[t.id];
     const lw = t.last_whatsapp;
@@ -230,7 +297,7 @@
           ${open ? `<ul class="loglist">${(S.logs[t.id] || null) === null ? "<li>Loading…</li>" : S.logs[t.id].log.map((l) => `<li class="${l.kind === "whatsapp" ? "wa" : l.kind === "status" ? "st" : ""}">${esc(l.message)}<small>${esc(l.actor)} · ${ago(l.at)}</small></li>`).join("") || "<li>No changes yet.</li>"}</ul>` : ""}
         </div>
       </div>
-      <div class="t-mid"><ol class="timeline">${t.segments.length ? t.segments.map(segItem).join("") : `<li class="empty-seg">No segments yet. Use Edit Trip to add the itinerary.</li>`}</ol></div>
+      <div class="t-mid">${clockStrip(t)}<ol class="timeline">${t.segments.length ? t.segments.map(segItem).join("") : `<li class="empty-seg">No segments yet. Use Edit Trip to add the itinerary.</li>`}</ol></div>
       <div class="t-right">
         <button class="btn soft" data-act="track" data-id="${t.id}">${I.radio}Track Live Schedule</button>
         <button class="btn soft" data-act="edit" data-id="${t.id}">${I.pencil}Edit Trip</button>
@@ -325,6 +392,7 @@
     <form class="dlg-b" id="editForm" novalidate>
       <div class="field"><label for="eTitle">Trip title</label><input id="eTitle" value="${esc(d.title)}" placeholder="e.g. Booking Confirmation on IRCTC, Train 16345, LTT - KYJ"></div>
       <div class="field"><span class="lab">Travellers</span><div class="tags" id="eTags">${d.travelers.map((n, i) => `<span>${esc(n)}<button type="button" data-act="rm-trav" data-i="${i}" aria-label="Remove ${esc(n)}">×</button></span>`).join("")}<input id="eTrav" list="travList" placeholder="Type a name and press Enter"></div>
+        ${tzDatalist()}
         <datalist id="travList">${S.travelers.map((x) => `<option value="${esc(x.name)}">`).join("")}</datalist>
         <span class="hint">Names are matched to the Travellers directory to find WhatsApp numbers.</span></div>
       <div class="field"><span class="lab">Itinerary</span>
@@ -340,6 +408,11 @@
     $("#eTrav").addEventListener("keydown", (e) => {
       if ((e.key === "Enter" || e.key === ",") && e.target.value.trim()) { e.preventDefault(); collectEdit(); draft.travelers.push(e.target.value.trim().replace(/,$/, "")); drawEdit(); $("#eTrav").focus(); }
     });
+  }
+  function tzDatalist() {
+    let all = []; try { all = Intl.supportedValuesOf("timeZone"); } catch { all = Object.keys(ZONE_NAME); }
+    const first = ["Asia/Kolkata", "America/Toronto", "America/Vancouver", "America/Edmonton", "America/Winnipeg", "America/Halifax", "America/Regina", "America/St_Johns"];
+    return `<datalist id="tzList">${[...first, ...all.filter((z) => !first.includes(z))].map((z) => `<option value="${esc(z)}">${esc(zoneName(z))}</option>`).join("")}</datalist>`;
   }
   function segEditor(s, i) {
     const o = (v) => esc(v || "");
@@ -359,6 +432,8 @@
         <div class="field c2"><label>${s.type === "cab" ? "Vehicle no." : "Flight / train no."}</label><input name="number" value="${o(s.number)}" placeholder="16345"></div>
         <div class="field c2"><label>PNR / booking ref</label><input name="reference" value="${o(s.reference)}"></div>
         <div class="field c6"><label>Details</label><input name="details" value="${o(s.details)}" placeholder="Coach A1, Berth 22, Class 2A AC"></div>
+        <div class="field c3"><label>${s.type === "hotel" ? "Hotel time zone" : "From time zone"}</label><input name="${s.type === "hotel" ? "destination_tz" : "origin_tz"}" list="tzList" value="${o(s.type === "hotel" ? s.destination_tz : s.origin_tz)}" placeholder="Worked out from the place"></div>
+        ${s.type === "hotel" ? "" : `<div class="field c3"><label>To time zone</label><input name="destination_tz" list="tzList" value="${o(s.destination_tz)}" placeholder="Worked out from the place"></div>`}
       </div></div>`;
   }
   function collectEdit() {
@@ -391,6 +466,7 @@
         <div class="field"><label for="tName">Name as on tickets</label><input id="tName" value="${esc(t.name)}" required></div>
         <div class="field"><label for="tPhone">WhatsApp number</label><input id="tPhone" type="tel" value="${esc(t.phone)}" placeholder="+91 98765 43210"><span class="hint">Include the country code. 10-digit numbers are treated as Indian (+91).</span></div>
         <div class="field"><label for="tEmail">Work email</label><input id="tEmail" type="email" value="${esc(t.email)}" placeholder="name@starkpeople.in"></div>
+        <div class="field"><label for="tTz">Home time zone</label><input id="tTz" list="tzList" value="${esc(t.tz || "")}" placeholder="Asia/Kolkata (India)">${tzDatalist()}<span class="hint">Where this person is based, e.g. America/Toronto for Toronto. Their local time then shows on every trip card.</span></div>
         <div class="field"><label for="tAliases">Other spellings</label><input id="tAliases" value="${esc(t.aliases)}" placeholder="MR TONY STARK, A STARK"><span class="hint">Comma-separated. Use for how airlines or IRCTC print the name.</span></div>
         <label class="check"><input type="checkbox" id="tNotify" ${t.notify ? "checked" : ""}><span><b>Automatic WhatsApp updates</b><span>Confirmations, status changes and departure reminders.</span></span></label>
         <div class="err" id="tErr"></div>
@@ -398,7 +474,7 @@
       <div class="dlg-f">${tr ? `<button class="btn danger" data-act="del-trav" data-id="${tr.id}">Delete</button>` : "<span></span>"}<div class="r"><button class="btn" data-act="close">Cancel</button><button class="btn primary" data-act="save-trav" data-id="${tr ? tr.id : ""}">Save traveller</button></div></div>`, "narrow");
   }
   async function saveTraveller(id) {
-    const body = { name: $("#tName").value, phone: $("#tPhone").value, email: $("#tEmail").value, aliases: $("#tAliases").value, notify: $("#tNotify").checked };
+    const body = { name: $("#tName").value, phone: $("#tPhone").value, email: $("#tEmail").value, aliases: $("#tAliases").value, notify: $("#tNotify").checked, tz: $("#tTz").value.trim() };
     try {
       if (id) await api(`/travelers/${id}`, { method: "PUT", body }); else await api("/travelers", { method: "POST", body });
       closeModal(); toast("Traveller saved"); await loadTravellers(); await refresh();
@@ -412,8 +488,8 @@
     $("#main").innerHTML = `<div class="page-head"><div><h1 class="page">Travellers</h1><p>WhatsApp numbers for everyone who travels. Booking names are matched here.</p></div><button class="btn primary" data-act="new-trav">${I.plus}Add traveller</button></div>
       <section class="panel">
         ${unmatched.length ? `<div class="missing-names"><b>Names on bookings without a number:</b> ${unmatched.map((n) => `<button class="btn sm" data-act="add-number" data-name="${esc(n)}">${I.plus}${esc(n)}</button>`).join("")}</div>` : ""}
-        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>WhatsApp</th><th>Email</th><th>Other spellings</th><th>Auto updates</th><th></th></tr></thead><tbody>
-        ${S.travelers.map((t) => `<tr><td><b>${esc(t.name)}</b></td><td class="mono">${esc(t.phone) || '<span class="sub">—</span>'}</td><td>${esc(t.email) || '<span class="sub">—</span>'}</td><td class="sub">${esc(t.aliases)}</td><td>${t.notify ? '<span class="state s-sent">On</span>' : '<span class="state s-skipped">Off</span>'}</td><td><button class="btn sm" data-act="edit-trav" data-id="${t.id}">Edit</button></td></tr>`).join("") || `<tr><td colspan="6" class="sub" style="padding:28px;text-align:center">No travellers yet. Add one so trip updates can reach them on WhatsApp.</td></tr>`}
+        <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>WhatsApp</th><th>Email</th><th>Other spellings</th><th>Local time</th><th>Auto updates</th><th></th></tr></thead><tbody>
+        ${S.travelers.map((t) => `<tr><td><b>${esc(t.name)}</b></td><td class="mono">${esc(t.phone) || '<span class="sub">—</span>'}</td><td>${esc(t.email) || '<span class="sub">—</span>'}</td><td class="sub">${esc(t.aliases)}</td><td>${zoneOk(t.tz) ? `<b data-clock="${esc(t.tz)}">${esc(clockParts(t.tz).time)}</b><div class="sub">${esc(zoneName(t.tz))}</div>` : '<span class="sub">India</span>'}</td><td>${t.notify ? '<span class="state s-sent">On</span>' : '<span class="state s-skipped">Off</span>'}</td><td><button class="btn sm" data-act="edit-trav" data-id="${t.id}">Edit</button></td></tr>`).join("") || `<tr><td colspan="7" class="sub" style="padding:28px;text-align:center">No travellers yet. Add one so trip updates can reach them on WhatsApp.</td></tr>`}
         </tbody></table></div></section>`;
   }
 

@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import core  # noqa: E402
 import db  # noqa: E402
 import gmail  # noqa: E402
+import places  # noqa: E402
 
 PORT = int(os.environ.get("STARK_PORT", "8795"))
 BASE_URL = os.environ.get("STARK_BASE_URL", "https://travel.starkpeople.in").rstrip("/")
@@ -311,21 +312,25 @@ def _traveler_fields(b):
     phone = str(b.get("phone", "")).strip()[:30]
     if phone and len(re.sub(r"\D", "", phone)) < 10:
         raise ValueError("Enter the WhatsApp number with country code, e.g. +91 98765 43210.")
-    return (name, phone, str(b.get("email", "")).strip()[:200], str(b.get("aliases", "")).strip()[:500], int(bool(b.get("notify", True))))
+    tz = str(b.get("tz", "") or "").strip()
+    if tz and not places.check_tz(tz):
+        raise ValueError(f"“{tz}” isn't a time zone. Pick one from the list, e.g. America/Toronto.")
+    return (name, phone, str(b.get("email", "")).strip()[:200], str(b.get("aliases", "")).strip()[:500],
+            int(bool(b.get("notify", True))), tz)
 
 
 def r_traveler_create(h, user, q):
     f = _traveler_fields(h.body())
     tid = db.new_id()
     with db.tx() as c:
-        c.execute("INSERT INTO travelers(id, name, phone, email, aliases, notify, created_at) VALUES(?,?,?,?,?,?,?)", (tid,) + f + (db.now(),))
+        c.execute("INSERT INTO travelers(id, name, phone, email, aliases, notify, tz, created_at) VALUES(?,?,?,?,?,?,?,?)", (tid,) + f + (db.now(),))
     return h.send_json(200, {"traveler": db.one("SELECT * FROM travelers WHERE id = ?", (tid,))})
 
 
 def r_traveler_update(h, user, q, tid):
     f = _traveler_fields(h.body())
     with db.tx() as c:
-        c.execute("UPDATE travelers SET name=?, phone=?, email=?, aliases=?, notify=? WHERE id=?", f + (tid,))
+        c.execute("UPDATE travelers SET name=?, phone=?, email=?, aliases=?, notify=?, tz=? WHERE id=?", f + (tid,))
     return h.send_json(200, {"traveler": db.one("SELECT * FROM travelers WHERE id = ?", (tid,))})
 
 

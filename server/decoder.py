@@ -29,6 +29,8 @@ Reply with one JSON object exactly in this shape:
       "status_label": "status as written in the email, e.g. CNF, RAC 12, Confirmed",
       "origin": "departure place, e.g. Mumbai (LTT). For hotels: Hotel Stay",
       "destination": "arrival place. For hotels: the hotel name",
+      "origin_tz": "IANA time zone of the departure place, e.g. Asia/Kolkata, America/Toronto; empty string if unsure",
+      "destination_tz": "IANA time zone of the arrival place or hotel city; empty string if unsure",
       "date": "YYYY-MM-DD departure / check-in date, or null",
       "start_time": "HH:MM departure / check-in time, or null",
       "end_date": "YYYY-MM-DD arrival / check-out date, or null",
