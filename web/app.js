@@ -32,6 +32,7 @@
   // ------------------------------------------------------------ state
   const S = {
     user: null, view: "trips", trips: [], status: {}, travelers: [], settings: null,
+    sel: null, mobileDetail: false,
     q: "", phase: "upcoming", mode: "", attention: false, special: "", sort: (() => { try { return localStorage.getItem("std-sort") || "soonest"; } catch { return "soonest"; } })(), openLogs: {}, logs: {},
     emails: [], wa: [], pending: [], busy: false,
   };
@@ -56,6 +57,10 @@
     "Asia/Kolkata": "India", "America/Toronto": "Toronto, Canada", "America/Vancouver": "Vancouver, Canada",
     "America/Edmonton": "Calgary / Edmonton, Canada", "America/Winnipeg": "Winnipeg, Canada", "America/Regina": "Saskatchewan, Canada",
     "America/Halifax": "Halifax, Canada", "America/St_Johns": "St. John's, Canada", "America/Montreal": "Montréal, Canada",
+    "Europe/Berlin": "Germany", "Europe/Paris": "France", "Europe/Amsterdam": "Netherlands", "Europe/Zurich": "Switzerland",
+    "Europe/London": "United Kingdom", "Asia/Dubai": "Dubai / UAE", "Asia/Qatar": "Qatar", "Asia/Singapore": "Singapore",
+    "Asia/Riyadh": "Saudi Arabia", "Asia/Muscat": "Oman", "America/New_York": "New York (US Eastern)", "America/Chicago": "US Central",
+    "America/Los_Angeles": "US Pacific", "Australia/Sydney": "Sydney",
   };
   const zoneName = (tz) => ZONE_NAME[tz] || tz.split("/").pop().replace(/_/g, " ");
   const isCanada = (tz) => /^America\/(Toronto|Vancouver|Edmonton|Winnipeg|Regina|Halifax|St_Johns|Montreal|Whitehorse|Yellowknife|Iqaluit|Moncton|Glace_Bay|Goose_Bay|Dawson_Creek|Creston|Fort_Nelson|Cambridge_Bay|Inuvik|Rankin_Inlet|Resolute|Swift_Current|Atikokan|Blanc-Sablon|Dawson)$/.test(tz);
@@ -275,7 +280,50 @@
       return;
     }
     if (!list.length) { host.innerHTML = `<div class="empty"><h3>No trips match</h3><p>Try another status tab, clear the search, or switch off “Needs attention”.</p><button class="btn" data-act="clear-filters">Clear filters</button></div>`; return; }
-    host.innerHTML = list.map(tripCard).join("");
+    if (!list.some((t) => t.id === S.sel)) { S.sel = list[0].id; S.mobileDetail = false; }   // first card open by default
+    const listScroll = (host.querySelector(".tlist") || {}).scrollTop || 0;
+    host.innerHTML = `<div class="split ${S.mobileDetail ? "show-detail" : ""}">
+      <nav class="tlist" aria-label="Trips">${list.map(tripRow).join("")}</nav>
+      <section class="tdetail" id="tripDetail" aria-live="polite">${tripDetail(list.find((t) => t.id === S.sel))}</section></div>`;
+    host.querySelector(".tlist").scrollTop = listScroll;
+  }
+  function pickTrip(id, focusDetail) {
+    S.sel = id; S.mobileDetail = true;
+    const t = S.trips.find((x) => x.id === id); if (!t) return;
+    document.querySelectorAll(".trow").forEach((r) => r.setAttribute("aria-current", r.dataset.id === id ? "true" : "false"));
+    const d = $("#tripDetail"); if (d) d.innerHTML = tripDetail(t);
+    const sp = $(".split"); if (sp) sp.classList.add("show-detail");
+    if (window.matchMedia("(max-width: 900px)").matches) window.scrollTo({ top: ($("#tripList").getBoundingClientRect().top + window.scrollY - 70) });
+    else if (d) d.scrollTop = 0;
+    if (focusDetail && d) d.focus({ preventScroll: true });
+  }
+  // Compact card for the left-hand list.
+  function tripRow(t) {
+    const live = t.segments.filter((s) => s.status !== "cancelled");
+    // Stops in order (hotels and cabs aren't stops), consecutive repeats removed; long routes keep start, … and the last two.
+    const legs = (live.length ? live : t.segments).filter((x) => !["hotel", "cab"].includes(x.type));
+    let stops = [];
+    (legs.length ? legs : live.slice(0, 1)).forEach((x) => [x.type === "hotel" ? "" : x.origin, x.destination].forEach((pl) => { if (pl && stops[stops.length - 1] !== pl) stops.push(pl); }));
+    const route = stops.length > 4 ? [stops[0], "…", ...stops.slice(-2)] : stops;
+    const nd = nextDep(t);
+    const when = nd ? `${t.phase === "ongoing" ? "Next" : "Departs"} ${fmtDate(nd.slice(0, 10))}${nd.length > 10 ? ", " + fmtTime(nd.slice(10)) : ""}`
+      : t.first_date ? `${fmtDate(t.first_date)}${t.last_date && t.last_date !== t.first_date ? " – " + fmtDate(t.last_date) : ""}` : "No dates yet";
+    const flags = [
+      t.segments.some((s) => s.status === "delayed") ? `<span class="flag bad">Delayed</span>` : "",
+      t.segments.some((s) => s.status === "waitlisted") ? `<span class="flag warn">Waitlisted</span>` : "",
+      needsNumber(t) && t.phase !== "completed" && t.phase !== "cancelled" ? `<span class="flag warn">No WhatsApp no.</span>` : "",
+      t.last_whatsapp && t.last_whatsapp.state === "pending" ? `<span class="flag wa">To send</span>` : "",
+    ].join("");
+    const names = t.travelers.map((p) => p.display_name || p.name);
+    return `<button type="button" class="trow" data-act="pick" data-id="${t.id}" aria-current="${t.id === S.sel}">
+      <span class="trow-top"><span class="trow-modes">${t.modes.map((m) => `<span style="color:${MODE_COLOR[m]}" title="${TYPE_LABEL[m]}">${I[m] || I.other}</span>`).join("")}</span>
+        <span class="phase ph-${t.phase}">${{ upcoming: "Upcoming", ongoing: "Ongoing", completed: "Completed", cancelled: "Cancelled" }[t.phase]}</span></span>
+      <span class="trow-title">${esc(t.title)}</span>
+      ${route.length ? `<span class="trow-route">${route.map(esc).join(' <span class="arr">→</span> ')}</span>` : ""}
+      <span class="trow-meta">${I.cal}<span>${esc(when)}</span></span>
+      <span class="trow-people">${names.length ? esc(names.slice(0, 3).join(", ")) + (names.length > 3 ? ` +${names.length - 3}` : "") : "No traveller named"}</span>
+      ${flags ? `<span class="trow-flags">${flags}</span>` : ""}
+    </button>`;
   }
   function modeBadge(t) {
     if (t.modes.length === 1) { const m = t.modes[0]; return `<span class="mode-pill"><span style="color:${MODE_COLOR[m]}">${I[m]}</span>${TYPE_LABEL[m]}</span>`; }
@@ -300,32 +348,40 @@
         ${noteBits.length ? `<div class="note">${esc(noteBits.join(" · "))}</div>` : ""}
       </div></li>`;
   }
-  function tripCard(t) {
+  // Full details of the selected trip (right-hand pane).
+  function tripDetail(t) {
+    if (!t) return "";
     const phaseLbl = { upcoming: "Upcoming", ongoing: "Ongoing", completed: "Completed", cancelled: "Cancelled" }[t.phase];
     const people = t.travelers.length ? t.travelers.map((p) => `<div class="person"><span class="avatar">${esc(initials(p.name))}</span><div style="min-width:0"><b>${esc(p.name)}</b>${zoneOk(p.tz) && p.tz !== HOME_TZ ? `<small class="home-clk ${isCanada(p.tz) ? "ca" : ""}">${esc(zoneName(p.tz))} · <span data-clock="${esc(p.tz)}">${esc(clockParts(p.tz).time)}</span></small>` : ""}${p.phone ? `<small class="mono">${esc(p.phone)}</small>` : `<small class="miss">No WhatsApp number · <button data-act="add-number" data-name="${esc(p.name)}">Add</button></small>`}</div></div>`).join("")
       : `<div class="person"><span class="avatar">?</span><div><b>Not named in the email</b><small><button class="loglink" data-act="edit" data-id="${t.id}" style="color:var(--blue)">Add traveller</button></small></div></div>`;
     const open = S.openLogs[t.id];
     const lw = t.last_whatsapp;
-    const waMeta = !lw ? `<div class="wa-meta">No WhatsApp sent yet</div>`
-      : `<div class="wa-meta ${lw.state === "failed" ? "bad" : lw.state === "pending" ? "due" : ""}">${{
+    const waMeta = !lw ? `<span class="wa-meta">No WhatsApp sent yet</span>`
+      : `<span class="wa-meta ${lw.state === "failed" ? "bad" : lw.state === "pending" ? "due" : ""}">${{
         sent: "Last WhatsApp sent " + ago(lw.at), opened: "WhatsApp opened " + ago(lw.at), failed: "Last WhatsApp failed " + ago(lw.at),
-        pending: "Update waiting to be sent", dismissed: "Last update skipped", skipped: "Last update not sent: " + esc(lw.error || "") }[lw.state] || ""}</div>`;
-    return `<article class="trip" id="trip-${t.id}">
-      <div class="t-left">
+        pending: "Update waiting to be sent", dismissed: "Last update skipped", skipped: "Last update not sent: " + esc(lw.error || "") }[lw.state] || ""}</span>`;
+    return `<article class="trip" id="trip-${t.id}" tabindex="-1">
+      <button type="button" class="btn sm ghost back-btn" data-act="back-list">← All trips</button>
+      <header class="d-head">
         <div class="t-badges">${modeBadge(t)}<span class="phase ph-${t.phase}">${phaseLbl}</span></div>
-        <div class="t-title"><h3>${esc(t.title)}</h3><button class="icon-btn" data-act="edit" data-id="${t.id}" aria-label="Edit trip">${I.pencil}</button></div>
-        <div class="t-sec"><span class="lbl">Traveler(s)</span><div class="people">${people}</div></div>
-        <div class="t-sec t-log"><div class="row"><span class="lbl">Entry log</span><span class="count">${t.log_count} change${t.log_count === 1 ? "" : "s"}</span></div>
-          <button class="loglink" data-act="log" data-id="${t.id}" aria-expanded="${!!open}"><span style="display:inline-grid;width:14px;height:14px">${I.gear}</span>${open ? "Hide log history ▲" : "Load log history ▼"}</button>
-          ${open ? `<ul class="loglist">${(S.logs[t.id] || null) === null ? "<li>Loading…</li>" : S.logs[t.id].log.map((l) => `<li class="${l.kind === "whatsapp" ? "wa" : l.kind === "status" ? "st" : ""}">${esc(l.message)}<small>${esc(l.actor)} · ${ago(l.at)}</small></li>`).join("") || "<li>No changes yet.</li>"}</ul>` : ""}
+        <div class="t-title"><h2>${esc(t.title)}</h2><button class="icon-btn" data-act="edit" data-id="${t.id}" aria-label="Edit trip">${I.pencil}</button></div>
+        <div class="d-actions">
+          <button class="btn soft" data-act="track" data-id="${t.id}">${I.radio}Track Live Schedule</button>
+          <button class="btn soft" data-act="edit" data-id="${t.id}">${I.pencil}Edit Trip</button>
+          <button class="btn wa" data-act="wa" data-id="${t.id}">${I.send}Send to WhatsApp</button>
+          ${waMeta}
         </div>
-      </div>
-      <div class="t-mid">${clockStrip(t)}<ol class="timeline">${t.segments.length ? t.segments.map(segItem).join("") : `<li class="empty-seg">No segments yet. Use Edit Trip to add the itinerary.</li>`}</ol></div>
-      <div class="t-right">
-        <button class="btn soft" data-act="track" data-id="${t.id}">${I.radio}Track Live Schedule</button>
-        <button class="btn soft" data-act="edit" data-id="${t.id}">${I.pencil}Edit Trip</button>
-        <button class="btn wa" data-act="wa" data-id="${t.id}">${I.send}Send to WhatsApp</button>
-        ${waMeta}
+      </header>
+      ${clockStrip(t)}
+      <div class="d-body">
+        <div class="d-main"><h3 class="d-lbl">Itinerary</h3><ol class="timeline">${t.segments.length ? t.segments.map(segItem).join("") : `<li class="empty-seg">No segments yet. Use Edit Trip to add the itinerary.</li>`}</ol></div>
+        <aside class="d-side">
+          <div class="t-sec"><span class="lbl">Traveler(s)</span><div class="people">${people}</div></div>
+          <div class="t-sec t-log"><div class="row"><span class="lbl">Entry log</span><span class="count">${t.log_count} change${t.log_count === 1 ? "" : "s"}</span></div>
+            <button class="loglink" data-act="log" data-id="${t.id}" aria-expanded="${!!open}"><span style="display:inline-grid;width:14px;height:14px">${I.gear}</span>${open ? "Hide log history ▲" : "Load log history ▼"}</button>
+            ${open ? `<ul class="loglist">${(S.logs[t.id] || null) === null ? "<li>Loading…</li>" : S.logs[t.id].log.map((l) => `<li class="${l.kind === "whatsapp" ? "wa" : l.kind === "status" ? "st" : ""}">${esc(l.message)}<small>${esc(l.actor)} · ${ago(l.at)}</small></li>`).join("") || "<li>No changes yet.</li>"}</ul>` : ""}
+          </div>
+        </aside>
       </div></article>`;
   }
 
@@ -667,6 +723,7 @@
   }
   async function loadTravellers() { S.travelers = (await api("/travelers")).travelers; }
   async function refresh(flashId) {
+    if (flashId) S.sel = flashId;
     await Promise.all([loadTrips(), loadTravellers()]);
     for (const id of Object.keys(S.openLogs)) if (S.openLogs[id]) S.logs[id] = await api(`/trips/${id}/log`).catch(() => ({ log: [] }));
     if (S.view === "trips" && $("#tripList")) { renderTrips(); } else render();
@@ -704,6 +761,8 @@
         break;
       }
       case "tile-clear": S.special = ""; renderTrips(); break;
+      case "pick": pickTrip(id); break;
+      case "back-list": { S.mobileDetail = false; const sp = $(".split"); if (sp) sp.classList.remove("show-detail"); const r = document.querySelector(`.trow[data-id="${S.sel}"]`); if (r) { r.scrollIntoView({ block: "center" }); r.focus(); } break; }
       case "new-trip": openEdit(null); break;
       case "edit": if (trip) openEdit(trip); break;
       case "track": if (trip) openTrack(trip); break;
@@ -754,7 +813,7 @@
           .then(() => { a.textContent = "Opened ✓"; refresh(); }).catch((ex) => toast(ex.message, true));
         break;
       case "copy-wa": copy($("#waBody").value, $("#waBody")); break;
-      case "goto": e.preventDefault(); S.view = "trips"; S.phase = "all"; S.q = ""; render(); setTimeout(() => { const el = $("#trip-" + id); if (el) { el.scrollIntoView({ block: "center" }); el.classList.add("flash"); } }, 50); break;
+      case "goto": e.preventDefault(); S.view = "trips"; S.phase = "all"; S.q = ""; S.special = ""; S.sel = id; S.mobileDetail = true; render(); setTimeout(() => { const el = $("#trip-" + id); const r = document.querySelector(`.trow[data-id="${id}"]`); if (r) r.scrollIntoView({ block: "nearest" }); if (el) el.classList.add("flash"); }, 50); break;
       case "retry":
         a.disabled = true; a.textContent = "Reading…";
         try { const r = await api("/emails/retry", { method: "POST", body: { gmail_id: id } }); toast(r.parsed ? "Trip updated from email" : r.errors ? "Still couldn't read it" : "Not a booking email", !!r.errors); } catch (ex) { toast(ex.message, true); }
@@ -798,6 +857,11 @@
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && $("#layer").innerHTML) closeModal();
+    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && e.target.classList && e.target.classList.contains("trow")) {
+      e.preventDefault();
+      const rows = [...document.querySelectorAll(".trow")], i = rows.indexOf(e.target), n = rows[i + (e.key === "ArrowDown" ? 1 : -1)];
+      if (n) { n.focus(); pickTrip(n.dataset.id); S.mobileDetail = false; const sp = $(".split"); if (sp && !window.matchMedia("(max-width: 900px)").matches) sp.classList.remove("show-detail"); }
+    }
     const t = e.target;
     if (t.classList && t.classList.contains("chip-input")) {
       if ((e.key === "Enter" || e.key === ",") && t.value.trim()) { e.preventDefault(); addChips(t.dataset.which, t.value); redrawChips(t.dataset.which, true); }
