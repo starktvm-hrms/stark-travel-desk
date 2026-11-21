@@ -329,3 +329,13 @@ details.howto ol { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 4px;
 .home-clk { color: var(--ink-2) !important; font-weight: 600; }
 .home-clk.ca::before { content: "🍁 "; }
 .timechip small { font-size: 10.5px; font-weight: 700; opacity: .8; margin-left: 2px; }
+
+/* clickable summary tiles + active filter */
+button.stat { text-align: left; font: inherit; color: inherit; cursor: pointer; transition: border-color .15s, transform .15s; }
+button.stat:hover { border-color: var(--blue-line); transform: translateY(-1px); }
+button.stat[aria-pressed="true"] { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-soft); }
+button.stat .s { text-decoration: none; }
+button.stat:hover .s { color: var(--blue); }
+.active-filter { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 14px; border: 1px solid var(--blue-line); background: var(--blue-soft); border-radius: 12px; font-size: 13.5px; }
+.active-filter .btn.ghost { margin-left: auto; }
+@media (prefers-reduced-motion: reduce) { button.stat { transition: none; } }

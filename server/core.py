@@ -75,7 +75,9 @@ def trip_phase(trip, segs):
     now = datetime.now(TZ)
     starts = [x for x in (seg_start(s) for s in live) if x]
     ends = [x for x in (seg_end(s) for s in live) if x]
-    if all(s["status"] == "completed" for s in live) or (ends and max(ends) < now and len(ends) == len(live)):
+    # Legs without a date (a cab receipt, a hotel email with no check-in) can't keep a trip open forever:
+    # once every dated leg has finished, the trip is complete.
+    if all(s["status"] == "completed" for s in live) or (ends and max(ends) < now):
         return "completed"
     if starts and min(starts) <= now:
         return "ongoing"

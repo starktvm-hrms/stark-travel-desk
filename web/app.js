@@ -32,7 +32,7 @@
   // ------------------------------------------------------------ state
   const S = {
     user: null, view: "trips", trips: [], status: {}, travelers: [], settings: null,
-    q: "", phase: "upcoming", mode: "", attention: false, openLogs: {}, logs: {},
+    q: "", phase: "upcoming", mode: "", attention: false, special: "", sort: (() => { try { return localStorage.getItem("std-sort") || "soonest"; } catch { return "soonest"; } })(), openLogs: {}, logs: {},
     emails: [], wa: [], pending: [], busy: false,
   };
 
@@ -186,15 +186,35 @@
     return S.trips.filter((t) => {
       if (S.phase !== "all" && t.phase !== S.phase) return false;
       if (S.mode && !t.modes.includes(S.mode)) return false;
+      if (S.special === "today" && !departsToday(t)) return false;
+      if (S.special === "missing" && !(needsNumber(t) && t.phase !== "completed" && t.phase !== "cancelled")) return false;
       if (S.attention && !(needsNumber(t) || (t.last_whatsapp && t.last_whatsapp.state === "failed") || t.segments.some((s) => s.status === "delayed" || s.status === "waitlisted"))) return false;
       if (!q.length) return true;
       const hay = [t.title, ...t.travelers.map((p) => p.name), ...t.segments.flatMap((s) => [s.origin, s.destination, s.carrier, s.number, s.reference, s.details, s.status_label])].join(" ").toLowerCase();
       return q.every((w) => hay.includes(w));
-    }).sort((a, b) => {
-      const ka = a.first_date || "9999", kb = b.first_date || "9999";
-      return S.phase === "completed" || S.phase === "cancelled" ? (kb > ka ? 1 : kb < ka ? -1 : 0) : (ka > kb ? 1 : ka < kb ? -1 : 0);
-    });
+    }).sort(SORTS[S.sort] ? SORTS[S.sort].fn : SORTS.soonest.fn);
   }
+  const cmp = (x, y) => (x > y ? 1 : x < y ? -1 : 0);
+  const nextDep = (t) => {                       // the next leg still to start, else the first leg
+    const now = today(); const up = t.segments.filter((s) => s.status !== "cancelled" && s.date && s.date >= now).map((s) => s.date + (s.start_time || ""));
+    return up.length ? up.sort()[0] : null;      // null: nothing left to depart
+  };
+  const bySoonest = (a, b) => {
+    const x = nextDep(a), y = nextDep(b);
+    if (x && y) return cmp(x, y);
+    if (x || y) return x ? -1 : 1;               // trips still to depart first, finished ones after
+    return cmp(b.last_date || b.first_date || "", a.last_date || a.first_date || "");   // most recent finished first
+  };
+  const attnScore = (t) => (t.segments.some((s) => s.status === "delayed") ? 0 : t.last_whatsapp && t.last_whatsapp.state === "failed" ? 1 : needsNumber(t) ? 2 : t.segments.some((s) => s.status === "waitlisted") ? 3 : 9);
+  const SORTS = {
+    soonest: { label: "Next departure: soonest", fn: bySoonest },
+    latest: { label: "Departure: latest first", fn: (a, b) => cmp(b.first_date || "", a.first_date || "") },
+    added: { label: "Recently added", fn: (a, b) => b.created_at - a.created_at },
+    updated: { label: "Recently updated", fn: (a, b) => b.updated_at - a.updated_at },
+    traveller: { label: "Traveller A–Z", fn: (a, b) => cmp(((a.travelers[0] || {}).display_name || (a.travelers[0] || {}).name || "~").toLowerCase(), ((b.travelers[0] || {}).display_name || (b.travelers[0] || {}).name || "~").toLowerCase()) },
+    attention: { label: "Needs attention first", fn: (a, b) => attnScore(a) - attnScore(b) || bySoonest(a, b) },
+  };
+  const departsToday = (t) => { const t0 = today(); return t.segments.some((s) => s.date === t0 && s.status !== "cancelled"); };
   function setupChecklist() {
     const st = S.status || {};
     const hasNumbers = S.trips.length === 0 || S.trips.some((t) => t.travelers.some((p) => p.phone));
@@ -216,18 +236,21 @@
       ${setupChecklist()}
       ${pendingPanel()}
       <section class="stats">
-        <div class="stat"><span class="k">Upcoming trips</span><span class="v">${counts.upcoming}</span><span class="s">${counts.ongoing} travelling now</span></div>
-        <div class="stat"><span class="k">Departing today</span><span class="v">${departing}</span><span class="s">Trips with a segment today</span></div>
-        <div class="stat ${missing.size ? "warn" : ""}"><span class="k">Missing WhatsApp number</span><span class="v">${missing.size}</span><span class="s">${missing.size ? "Travellers who won't get updates" : "Everyone can be reached"}</span></div>
-        <div class="stat ${S.pending.length ? "warn" : ""}"><span class="k">WhatsApp today</span><span class="v">${sentToday ?? "–"}</span><span class="s">${S.pending.length ? `${S.pending.length} waiting to be sent` : "Sent or opened today"}</span></div>
+        <button type="button" class="stat" data-act="tile" data-tile="upcoming" aria-pressed="${S.phase === "upcoming" && !S.special}"><span class="k">Upcoming trips</span><span class="v">${counts.upcoming}</span><span class="s">${counts.ongoing} travelling now · show upcoming</span></button>
+        <button type="button" class="stat" data-act="tile" data-tile="today" aria-pressed="${S.special === "today"}"><span class="k">Departing today</span><span class="v">${departing}</span><span class="s">Trips with a segment today</span></button>
+        <button type="button" class="stat ${missing.size ? "warn" : ""}" data-act="tile" data-tile="missing" aria-pressed="${S.special === "missing"}"><span class="k">Missing WhatsApp number</span><span class="v">${missing.size}</span><span class="s">${missing.size ? "Show their trips" : "Everyone can be reached"}</span></button>
+        <button type="button" class="stat ${S.pending.length ? "warn" : ""}" data-act="tile" data-tile="wa"><span class="k">WhatsApp today</span><span class="v">${sentToday ?? "–"}</span><span class="s">${S.pending.length ? `${S.pending.length} waiting to be sent · open list` : "Sent or opened today · see activity"}</span></button>
       </section>
       <section class="filters">
         <div class="search">${I.search}<input id="q" type="search" placeholder="Search traveller, city, PNR, train or flight no., hotel…" value="${esc(S.q)}" aria-label="Search trips"></div>
         <div class="seg-ctl" role="group" aria-label="Trip status">${PHASES.map(([k, l]) => `<button data-phase="${k}" aria-pressed="${S.phase === k}">${l} <span class="n">${counts[k]}</span></button>`).join("")}</div>
         <select class="sel" id="mode" aria-label="Mode"><option value="">All modes</option>${["flight", "train", "bus", "cab", "hotel"].map((m) => `<option value="${m}" ${S.mode === m ? "selected" : ""}>${TYPE_LABEL[m]}</option>`).join("")}</select>
+        <select class="sel" id="sortBy" aria-label="Sort trips">${Object.entries(SORTS).map(([k, v]) => `<option value="${k}" ${S.sort === k ? "selected" : ""}>Sort: ${v.label}</option>`).join("")}</select>
         <label class="check" style="align-items:center"><input type="checkbox" id="attn" ${S.attention ? "checked" : ""}><span style="color:var(--ink-2);font-weight:600">Needs attention</span></label>
         <button class="btn" data-act="new-trip">${I.plus}Add trip</button>
       </section>
+      ${S.special ? `<div class="active-filter">Showing: <b>${S.special === "today" ? "Trips departing today" : "Trips with a traveller missing a WhatsApp number"}</b>
+        ${S.special === "missing" ? `<button class="btn sm" data-view="travellers">Add numbers</button>` : ""}<button class="btn sm ghost" data-act="tile-clear">Show all trips ×</button></div>` : ""}
       <section class="trips" id="tripList"></section>`;
     renderTripList();
   }
@@ -661,7 +684,7 @@
     const v = e.target.closest("[data-view]");
     if (v) { S.view = v.dataset.view; closeModal(); render(); return; }
     const p = e.target.closest("[data-phase]");
-    if (p) { S.phase = p.dataset.phase; renderTrips(); return; }
+    if (p) { S.phase = p.dataset.phase; S.special = ""; renderTrips(); return; }
     const a = e.target.closest("[data-act]");
     if (!a) return;
     const act = a.dataset.act, id = a.dataset.id;
@@ -671,7 +694,16 @@
       case "modal-bg": case "close": closeModal(); break;
       case "logout": await api("/logout", { method: "POST" }).catch(() => {}); S.user = null; renderLogin(); break;
       case "sync": sync(); break;
-      case "clear-filters": S.q = ""; S.mode = ""; S.attention = false; S.phase = "all"; renderTrips(); break;
+      case "clear-filters": S.q = ""; S.mode = ""; S.attention = false; S.special = ""; S.phase = "all"; renderTrips(); break;
+      case "tile": {
+        const k = a.dataset.tile;
+        if (k === "wa") { if (S.pending.length) { const el = $("#pendingPanel"); if (el) el.scrollIntoView({ block: "start", behavior: "smooth" }); } else { S.view = "activity"; render(); } break; }
+        if (k === "upcoming") { S.special = ""; S.phase = "upcoming"; }
+        else { S.special = S.special === k ? "" : k; S.phase = "all"; }
+        renderTrips(); const list = $("#tripList"); if (list) list.scrollIntoView({ block: "start", behavior: "smooth" });
+        break;
+      }
+      case "tile-clear": S.special = ""; renderTrips(); break;
       case "new-trip": openEdit(null); break;
       case "edit": if (trip) openEdit(trip); break;
       case "track": if (trip) openTrack(trip); break;
@@ -751,6 +783,7 @@
   });
   document.addEventListener("change", (e) => {
     if (e.target.id === "mode") { S.mode = e.target.value; renderTripList(); }
+    if (e.target.id === "sortBy") { S.sort = e.target.value; try { localStorage.setItem("std-sort", S.sort); } catch { /* private mode */ } renderTripList(); }
     if (e.target.id === "attn") { S.attention = e.target.checked; renderTripList(); }
   });
   document.addEventListener("submit", async (e) => {
